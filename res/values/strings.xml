@@ -2693,4 +2693,9 @@ found in the list of installed applications.</string>
     <!-- Widget Picker -->
     <string name="widget_count">(%d widgets)</string>
 
+    <!-- Switch storage mountpoints -->
+    <string name="pref_switch_storage_title">Use internal storage</string>
+    <string name="pref_switch_storage_summary_on">Using expanded internal storage for apps and media</string>
+    <string name="pref_switch_storage_summary_off">Using removable card for apps and media</string>
+
 </resources>
