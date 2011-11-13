@@ -2700,4 +2700,7 @@ found in the list of installed applications.</string>
     <string name="pref_switch_storage_summary_on">Using expanded internal storage for apps and media</string>
     <string name="pref_switch_storage_summary_off">Using removable card for apps and media</string>
 
+    <string name="title_volbtn_music_controls">Volume button music controls</string>
+    <string name="summary_volbtn_music_controls">Seek music tracks when long-pressing the volume buttons while screen off</string>
+
 </resources>
