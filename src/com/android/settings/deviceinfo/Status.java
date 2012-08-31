@@ -256,12 +256,8 @@ public class Status extends PreferenceActivity {
         setBtStatus();
         setIpAddressStatus();
 
-        String serial = Build.SERIAL;
-        if (serial != null && !serial.equals("")) {
-            setSummaryText(KEY_SERIAL_NUMBER, serial);
-        } else {
-            removePreferenceFromScreen(KEY_SERIAL_NUMBER);
-        }
+        removePreferenceFromScreen(KEY_SERIAL_NUMBER);
+        
     }
 
     @Override
