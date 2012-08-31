@@ -3875,5 +3875,8 @@ found in the list of installed apps.</string>
 
     <!-- Advanced, Device specific (DeviceParts) settings #CM -->
     <string name="device_settings_title">Device</string>
+    
+    <!-- OTA Updater -->
+    <string name="ota_updater">OTA Updater</string>
 
 </resources>

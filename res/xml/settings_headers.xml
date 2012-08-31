@@ -123,6 +123,17 @@
             android:targetPackage="com.cyanogenmod.settings.device"
             android:targetClass="com.cyanogenmod.settings.device.DeviceSettings" />
     </header>
+    
+    <!-- OTA Updater -->
+    <header
+    	android:id="@+id/ota_updater"
+    	android:title="@string/ota_updater"
+    	android:icon="@drawable/satellite_dish">
+    	<intent
+    		android:action="android.intent.action.MAIN"
+    		android:targetPackage="com.updater.ota"
+    		android:targetClass="com.updater.ota.OTAUpdaterActivity" />
+    </header>
 
     <!-- System -->
     <header
