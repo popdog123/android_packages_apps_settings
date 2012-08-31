@@ -19,6 +19,7 @@ package com.android.settings;
 import org.xmlpull.v1.XmlPullParserException;
 
 import android.app.Activity;
+import android.app.ActivityManagerNative;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.app.admin.DeviceAdminInfo;
@@ -35,6 +36,7 @@ import android.content.res.Resources;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.RemoteCallback;
+import android.os.RemoteException;
 import android.text.TextUtils.TruncateAt;
 import android.util.Log;
 import android.view.Display;
@@ -64,23 +66,22 @@ public class DeviceAdminAdd extends Activity {
     DeviceAdminInfo mDeviceAdmin;
     CharSequence mAddMsgText;
     
-    TextView mTitle;
     ImageView mAdminIcon;
     TextView mAdminName;
     TextView mAdminDescription;
     TextView mAddMsg;
+    ImageView mAddMsgExpander;
     boolean mAddMsgEllipsized = true;
     TextView mAdminWarning;
     ViewGroup mAdminPolicies;
     Button mActionButton;
     Button mCancelButton;
     
-    View mSelectLayout;
-    
     final ArrayList<View> mAddingPolicies = new ArrayList<View>();
     final ArrayList<View> mActivePolicies = new ArrayList<View>();
     
     boolean mAdding;
+    boolean mRefreshing;
     
     @Override
     protected void onCreate(Bundle icicle) {
@@ -91,7 +92,7 @@ public class DeviceAdminAdd extends Activity {
         mDPM = (DevicePolicyManager)getSystemService(Context.DEVICE_POLICY_SERVICE);
 
         if ((getIntent().getFlags()&Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
-            Log.w(TAG, "Can now start ADD_DEVICE_ADMIN as a new task");
+            Log.w(TAG, "Cannot start ADD_DEVICE_ADMIN as a new task");
             finish();
             return;
         }
@@ -103,20 +104,10 @@ public class DeviceAdminAdd extends Activity {
             finish();
             return;
         }
-        if (DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN.equals(getIntent().getAction())) {
-            // If this was an add request, then just exit immediately if the
-            // given component is already added.
-            if (mDPM.isAdminActive(cn)) {
-                setResult(Activity.RESULT_OK);
-                finish();
-                return;
-            }
-        }
         
         ActivityInfo ai;
         try {
-            ai = getPackageManager().getReceiverInfo(cn,
-                    PackageManager.GET_META_DATA);
+            ai = getPackageManager().getReceiverInfo(cn, PackageManager.GET_META_DATA);
         } catch (PackageManager.NameNotFoundException e) {
             Log.w(TAG, "Unable to retrieve device policy " + cn, e);
             finish();
@@ -126,7 +117,7 @@ public class DeviceAdminAdd extends Activity {
         ResolveInfo ri = new ResolveInfo();
         ri.activityInfo = ai;
         try {
-            mDeviceAdmin= new DeviceAdminInfo(this, ri);
+            mDeviceAdmin = new DeviceAdminInfo(this, ri);
         } catch (XmlPullParserException e) {
             Log.w(TAG, "Unable to retrieve device policy " + cn, e);
             finish();
@@ -137,17 +128,38 @@ public class DeviceAdminAdd extends Activity {
             return;
         }
         
-        mAddMsgText = getIntent().getCharSequenceExtra(
-                DevicePolicyManager.EXTRA_ADD_EXPLANATION);
-        
+        // This admin already exists, an we have two options at this point.  If new policy
+        // bits are set, show the user the new list.  If nothing has changed, simply return
+        // "OK" immediately.
+        if (DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN.equals(getIntent().getAction())) {
+            mRefreshing = false;
+            if (mDPM.isAdminActive(cn)) {
+                ArrayList<DeviceAdminInfo.PolicyInfo> newPolicies = mDeviceAdmin.getUsedPolicies();
+                for (int i = 0; i < newPolicies.size(); i++) {
+                    DeviceAdminInfo.PolicyInfo pi = newPolicies.get(i);
+                    if (!mDPM.hasGrantedPolicy(cn, pi.ident)) {
+                        mRefreshing = true;
+                        break;
+                    }
+                }
+                if (!mRefreshing) {
+                    // Nothing changed (or policies were removed) - return immediately
+                    setResult(Activity.RESULT_OK);
+                    finish();
+                    return;
+                }
+            }
+        }
+        mAddMsgText = getIntent().getCharSequenceExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION);
+
         setContentView(R.layout.device_admin_add);
         
-        mTitle = (TextView)findViewById(R.id.title);
         mAdminIcon = (ImageView)findViewById(R.id.admin_icon);
         mAdminName = (TextView)findViewById(R.id.admin_name);
         mAdminDescription = (TextView)findViewById(R.id.admin_description);
 
         mAddMsg = (TextView)findViewById(R.id.add_msg);
+        mAddMsgExpander = (ImageView) findViewById(R.id.add_msg_expander);
         mAddMsg.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 toggleMessageEllipsis(v);
@@ -157,20 +169,20 @@ public class DeviceAdminAdd extends Activity {
         // toggleMessageEllipsis also handles initial layout:
         toggleMessageEllipsis(mAddMsg);
 
-        mAdminWarning = (TextView)findViewById(R.id.admin_warning);
-        mAdminPolicies = (ViewGroup)findViewById(R.id.admin_policies);
-        mCancelButton = (Button)findViewById(R.id.cancel_button);
+        mAdminWarning = (TextView) findViewById(R.id.admin_warning);
+        mAdminPolicies = (ViewGroup) findViewById(R.id.admin_policies);
+        mCancelButton = (Button) findViewById(R.id.cancel_button);
         mCancelButton.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 finish();
             }
         });
-        mActionButton = (Button)findViewById(R.id.action_button);
+        mActionButton = (Button) findViewById(R.id.action_button);
         mActionButton.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 if (mAdding) {
                     try {
-                        mDPM.setActiveAdmin(mDeviceAdmin.getComponent());
+                        mDPM.setActiveAdmin(mDeviceAdmin.getComponent(), mRefreshing);
                         setResult(Activity.RESULT_OK);
                     } catch (RuntimeException e) {
                         // Something bad happened...  could be that it was
@@ -183,6 +195,12 @@ public class DeviceAdminAdd extends Activity {
                     }
                     finish();
                 } else {
+                    try {
+                        // Don't allow the admin to put a dialog up in front
+                        // of us while we interact with the user.
+                        ActivityManagerNative.getDefault().stopAppSwitches();
+                    } catch (RemoteException e) {
+                    }
                     mDPM.getRemoveWarning(mDeviceAdmin.getComponent(),
                             new RemoteCallback(mHandler) {
                         @Override
@@ -192,6 +210,10 @@ public class DeviceAdminAdd extends Activity {
                                             DeviceAdminReceiver.EXTRA_DISABLE_WARNING)
                                     : null;
                             if (msg == null) {
+                                try {
+                                    ActivityManagerNative.getDefault().resumeAppSwitches();
+                                } catch (RemoteException e) {
+                                }
                                 mDPM.removeActiveAdmin(mDeviceAdmin.getComponent());
                                 finish();
                             } else {
@@ -259,8 +281,9 @@ public class DeviceAdminAdd extends Activity {
             mAddMsg.setVisibility(View.VISIBLE);
         } else {
             mAddMsg.setVisibility(View.GONE);
+            mAddMsgExpander.setVisibility(View.GONE);
         }
-        if (mDPM.isAdminActive(mDeviceAdmin.getComponent())) {
+        if (!mRefreshing && mDPM.isAdminActive(mDeviceAdmin.getComponent())) {
             if (mActivePolicies.size() == 0) {
                 ArrayList<DeviceAdminInfo.PolicyInfo> policies = mDeviceAdmin.getUsedPolicies();
                 for (int i=0; i<policies.size(); i++) {
@@ -275,7 +298,7 @@ public class DeviceAdminAdd extends Activity {
             setViewVisibility(mAddingPolicies, View.GONE);
             mAdminWarning.setText(getString(R.string.device_admin_status,
                     mDeviceAdmin.getActivityInfo().applicationInfo.loadLabel(getPackageManager())));
-            mTitle.setText(getText(R.string.active_device_admin_msg));
+            setTitle(getText(R.string.active_device_admin_msg));
             mActionButton.setText(getText(R.string.remove_device_admin));
             mAdding = false;
         } else {
@@ -293,7 +316,7 @@ public class DeviceAdminAdd extends Activity {
             setViewVisibility(mActivePolicies, View.GONE);
             mAdminWarning.setText(getString(R.string.device_admin_warning,
                     mDeviceAdmin.getActivityInfo().applicationInfo.loadLabel(getPackageManager())));
-            mTitle.setText(getText(R.string.add_device_admin_msg));
+            setTitle(getText(R.string.add_device_admin_msg));
             mActionButton.setText(getText(R.string.add_device_admin));
             mAdding = true;
         }
@@ -307,8 +330,7 @@ public class DeviceAdminAdd extends Activity {
         tv.setEllipsize(mAddMsgEllipsized ? TruncateAt.END : null);
         tv.setMaxLines(mAddMsgEllipsized ? getEllipsizedLines() : MAX_ADD_MSG_LINES);
 
-        ImageView iv = (ImageView) findViewById(R.id.add_msg_expander);
-        iv.setImageResource(mAddMsgEllipsized ?
+        mAddMsgExpander.setImageResource(mAddMsgEllipsized ?
             com.android.internal.R.drawable.expander_ic_minimized :
             com.android.internal.R.drawable.expander_ic_maximized);
     }

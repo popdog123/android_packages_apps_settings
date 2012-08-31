@@ -16,10 +16,13 @@
 
 package com.android.settings.fuelgauge;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.SensorManager;
 import android.os.BatteryStats;
+import android.os.BatteryStats.Uid;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -28,14 +31,16 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
-import android.os.BatteryStats.Uid;
 import android.preference.Preference;
 import android.preference.PreferenceActivity;
+import android.preference.PreferenceFragment;
 import android.preference.PreferenceGroup;
 import android.preference.PreferenceScreen;
+import android.telephony.SignalStrength;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.Menu;
+import android.view.MenuInflater;
 import android.view.MenuItem;
 
 import com.android.internal.app.IBatteryStats;
@@ -56,14 +61,19 @@ import java.util.Map;
  * Displays a list of apps and subsystems that consume power, ordered by how much power was
  * consumed since the last time it was unplugged.
  */
-public class PowerUsageSummary extends PreferenceActivity implements Runnable {
+public class PowerUsageSummary extends PreferenceFragment implements Runnable {
 
     private static final boolean DEBUG = false;
 
     private static final String TAG = "PowerUsageSummary";
 
+    private static final String KEY_APP_LIST = "app_list";
+    private static final String KEY_BATTERY_STATUS = "battery_status";
+
     private static final int MENU_STATS_TYPE = Menu.FIRST;
     private static final int MENU_STATS_REFRESH = Menu.FIRST + 1;
+
+    private static BatteryStatsImpl sStatsXfer;
 
     IBatteryStats mBatteryInfo;
     BatteryStatsImpl mStats;
@@ -72,6 +82,7 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
     private final List<BatterySipper> mBluetoothSippers = new ArrayList<BatterySipper>();
 
     private PreferenceGroup mAppListGroup;
+    private Preference mBatteryStatusPref;
 
     private int mStatsType = BatteryStats.STATS_SINCE_CHARGED;
 
@@ -92,39 +103,65 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
     private ArrayList<BatterySipper> mRequestQueue = new ArrayList<BatterySipper>();
     private Thread mRequestThread;
     private boolean mAbort;
-    
+
+    private BroadcastReceiver mBatteryInfoReceiver = new BroadcastReceiver() {
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (Intent.ACTION_BATTERY_CHANGED.equals(action)) {
+                String batteryLevel = com.android.settings.Utils.getBatteryPercentage(intent);
+                String batteryStatus = com.android.settings.Utils.getBatteryStatus(getResources(),
+                        intent);
+                String batterySummary = context.getResources().getString(
+                        R.string.power_usage_level_and_status, batteryLevel, batteryStatus);
+                mBatteryStatusPref.setTitle(batterySummary);
+            }
+        }
+    };
+
     @Override
-    protected void onCreate(Bundle icicle) {
+    public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
 
-        mStats = (BatteryStatsImpl)getLastNonConfigurationInstance();
+        if (icicle != null) {
+            mStats = sStatsXfer;
+        }
 
         addPreferencesFromResource(R.xml.power_usage_summary);
         mBatteryInfo = IBatteryStats.Stub.asInterface(
                 ServiceManager.getService("batteryinfo"));
-        mAppListGroup = (PreferenceGroup) findPreference("app_list");
-        mPowerProfile = new PowerProfile(this);
+        mAppListGroup = (PreferenceGroup) findPreference(KEY_APP_LIST);
+        mBatteryStatusPref = mAppListGroup.findPreference(KEY_BATTERY_STATUS);
+        mPowerProfile = new PowerProfile(getActivity());
+        setHasOptionsMenu(true);
     }
 
     @Override
-    public Object onRetainNonConfigurationInstance() {
-        return mStats;
-    }
-
-    @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         mAbort = false;
+        getActivity().registerReceiver(mBatteryInfoReceiver,
+                new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         refreshStats();
     }
 
     @Override
-    protected void onPause() {
+    public void onPause() {
         synchronized (mRequestQueue) {
             mAbort = true;
         }
         mHandler.removeMessages(MSG_UPDATE_NAME_ICON);
+        getActivity().unregisterReceiver(mBatteryInfoReceiver);
         super.onPause();
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (getActivity().isChangingConfigurations()) {
+            sStatsXfer = mStats;
+        }
     }
 
     @Override
@@ -133,9 +170,11 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
             Parcel hist = Parcel.obtain();
             mStats.writeToParcelWithoutUids(hist, 0);
             byte[] histData = hist.marshall();
-            Intent intent = new Intent(this, BatteryHistoryDetail.class);
-            intent.putExtra(BatteryHistoryDetail.EXTRA_STATS, histData);
-            startActivity(intent);
+            Bundle args = new Bundle();
+            args.putByteArray(BatteryHistoryDetail.EXTRA_STATS, histData);
+            PreferenceActivity pa = (PreferenceActivity)getActivity();
+            pa.startPreferencePanel(BatteryHistoryDetail.class.getName(), args,
+                    R.string.history_details_title, null, null, 0);
             return super.onPreferenceTreeClick(preferenceScreen, preference);
         }
         if (!(preference instanceof PowerGaugePreference)) {
@@ -143,20 +182,20 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         }
         PowerGaugePreference pgp = (PowerGaugePreference) preference;
         BatterySipper sipper = pgp.getInfo();
-        Intent intent = new Intent(this, PowerUsageDetail.class);
-        intent.putExtra(PowerUsageDetail.EXTRA_TITLE, sipper.name);
-        intent.putExtra(PowerUsageDetail.EXTRA_PERCENT, (int)
+        Bundle args = new Bundle();
+        args.putString(PowerUsageDetail.EXTRA_TITLE, sipper.name);
+        args.putInt(PowerUsageDetail.EXTRA_PERCENT, (int)
                 Math.ceil(sipper.getSortValue() * 100 / mTotalPower));
-        intent.putExtra(PowerUsageDetail.EXTRA_GAUGE, (int)
+        args.putInt(PowerUsageDetail.EXTRA_GAUGE, (int)
                 Math.ceil(sipper.getSortValue() * 100 / mMaxPower));
-        intent.putExtra(PowerUsageDetail.EXTRA_USAGE_DURATION, mStatsPeriod);
-        intent.putExtra(PowerUsageDetail.EXTRA_ICON_PACKAGE, sipper.defaultPackageName);
-        intent.putExtra(PowerUsageDetail.EXTRA_ICON_ID, sipper.iconId);
-        intent.putExtra(PowerUsageDetail.EXTRA_NO_COVERAGE, sipper.noCoveragePercent);
+        args.putLong(PowerUsageDetail.EXTRA_USAGE_DURATION, mStatsPeriod);
+        args.putString(PowerUsageDetail.EXTRA_ICON_PACKAGE, sipper.defaultPackageName);
+        args.putInt(PowerUsageDetail.EXTRA_ICON_ID, sipper.iconId);
+        args.putDouble(PowerUsageDetail.EXTRA_NO_COVERAGE, sipper.noCoveragePercent);
         if (sipper.uidObj != null) {
-            intent.putExtra(PowerUsageDetail.EXTRA_UID, sipper.uidObj.getUid());
+            args.putInt(PowerUsageDetail.EXTRA_UID, sipper.uidObj.getUid());
         }
-        intent.putExtra(PowerUsageDetail.EXTRA_DRAIN_TYPE, sipper.drainType);
+        args.putSerializable(PowerUsageDetail.EXTRA_DRAIN_TYPE, sipper.drainType);
 
         int[] types;
         double[] values;
@@ -190,12 +229,12 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
                 Writer result = new StringWriter();
                 PrintWriter printWriter = new PrintWriter(result);
                 mStats.dumpLocked(printWriter, "", mStatsType, uid.getUid());
-                intent.putExtra(PowerUsageDetail.EXTRA_REPORT_DETAILS, result.toString());
+                args.putString(PowerUsageDetail.EXTRA_REPORT_DETAILS, result.toString());
                 
                 result = new StringWriter();
                 printWriter = new PrintWriter(result);
                 mStats.dumpCheckinLocked(printWriter, mStatsType, uid.getUid());
-                intent.putExtra(PowerUsageDetail.EXTRA_REPORT_CHECKIN_DETAILS, result.toString());
+                args.putString(PowerUsageDetail.EXTRA_REPORT_CHECKIN_DETAILS, result.toString());
             }
             break;
             case CELL:
@@ -258,34 +297,27 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
                 };
             }
         }
-        intent.putExtra(PowerUsageDetail.EXTRA_DETAIL_TYPES, types);
-        intent.putExtra(PowerUsageDetail.EXTRA_DETAIL_VALUES, values);
-        startActivity(intent);
+        args.putIntArray(PowerUsageDetail.EXTRA_DETAIL_TYPES, types);
+        args.putDoubleArray(PowerUsageDetail.EXTRA_DETAIL_VALUES, values);
+        PreferenceActivity pa = (PreferenceActivity)getActivity();
+        pa.startPreferencePanel(PowerUsageDetail.class.getName(), args,
+                R.string.details_title, null, null, 0);
 
         return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
     @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
+    public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
         if (DEBUG) {
             menu.add(0, MENU_STATS_TYPE, 0, R.string.menu_stats_total)
                     .setIcon(com.android.internal.R.drawable.ic_menu_info_details)
                     .setAlphabeticShortcut('t');
         }
-        menu.add(0, MENU_STATS_REFRESH, 0, R.string.menu_stats_refresh)
-                .setIcon(com.android.internal.R.drawable.ic_menu_refresh)
+        MenuItem refresh = menu.add(0, MENU_STATS_REFRESH, 0, R.string.menu_stats_refresh)
+                .setIcon(R.drawable.ic_menu_refresh_holo_dark)
                 .setAlphabeticShortcut('r');
-        return true;
-    }
-
-    @Override
-    public boolean onPrepareOptionsMenu(Menu menu) {
-        if (DEBUG) {
-            menu.findItem(MENU_STATS_TYPE).setTitle(mStatsType == BatteryStats.STATS_SINCE_CHARGED
-                    ? R.string.menu_stats_unplugged
-                    : R.string.menu_stats_total);
-        }
-        return true;
+        refresh.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM |
+                MenuItem.SHOW_AS_ACTION_WITH_TEXT);
     }
 
     @Override
@@ -308,6 +340,12 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         }
     }
 
+    private void addNotAvailableMessage() {
+        Preference notAvailable = new Preference(getActivity());
+        notAvailable.setTitle(R.string.power_usage_not_available);
+        mAppListGroup.addPreference(notAvailable);
+    }
+
     private void refreshStats() {
         if (mStats == null) {
             load();
@@ -322,34 +360,38 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         mUsageList.clear();
         mWifiSippers.clear();
         mBluetoothSippers.clear();
-        processAppUsage();
-        processMiscUsage();
-
         mAppListGroup.setOrderingAsAdded(false);
 
-        BatteryHistoryPreference hist = new BatteryHistoryPreference(this, mStats);
+        mBatteryStatusPref.setOrder(-2);
+        mAppListGroup.addPreference(mBatteryStatusPref);
+        BatteryHistoryPreference hist = new BatteryHistoryPreference(getActivity(), mStats);
         hist.setOrder(-1);
         mAppListGroup.addPreference(hist);
         
+        if (mPowerProfile.getAveragePower(PowerProfile.POWER_SCREEN_FULL) < 10) {
+            addNotAvailableMessage();
+            return;
+        }
+        processAppUsage();
+        processMiscUsage();
+
         Collections.sort(mUsageList);
         for (BatterySipper sipper : mUsageList) {
             if (sipper.getSortValue() < MIN_POWER_THRESHOLD) continue;
             final double percentOfTotal =  ((sipper.getSortValue() / mTotalPower) * 100);
             if (percentOfTotal < 1) continue;
-            PowerGaugePreference pref = new PowerGaugePreference(this, sipper.getIcon(), sipper);
-            double percentOfMax = (sipper.getSortValue() * 100) / mMaxPower;
+            PowerGaugePreference pref = new PowerGaugePreference(getActivity(), sipper.getIcon(), sipper);
+            final double percentOfMax = (sipper.getSortValue() * 100) / mMaxPower;
             sipper.percent = percentOfTotal;
             pref.setTitle(sipper.name);
-            pref.setPercent(percentOfTotal);
             pref.setOrder(Integer.MAX_VALUE - (int) sipper.getSortValue()); // Invert the order
-            pref.setGaugeValue(percentOfMax);
+            pref.setPercent(percentOfMax, percentOfTotal);
             if (sipper.uidObj != null) {
                 pref.setKey(Integer.toString(sipper.uidObj.getUid()));
             }
             mAppListGroup.addPreference(pref);
             if (mAppListGroup.getPreferenceCount() > (MAX_ITEMS_TO_LIST+1)) break;
         }
-        if (DEBUG) setTitle("Battery total uAh = " + ((mTotalPower * 1000) / 3600));
         synchronized (mRequestQueue) {
             if (!mRequestQueue.isEmpty()) {
                 if (mRequestThread == null) {
@@ -362,16 +404,9 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         }
     }
 
-    private void updateStatsPeriod(long duration) {
-        String durationString = Utils.formatElapsedTime(this, duration / 1000);
-        String label = getString(mStats.isOnBattery()
-                ? R.string.battery_stats_duration
-                : R.string.battery_stats_last_duration, durationString);
-        setTitle(label);
-    }
-
     private void processAppUsage() {
-        SensorManager sensorManager = (SensorManager)getSystemService(Context.SENSOR_SERVICE);
+        SensorManager sensorManager = (SensorManager)getActivity().getSystemService(
+                Context.SENSOR_SERVICE);
         final int which = mStatsType;
         final int speedSteps = mPowerProfile.getNumSpeedSteps();
         final double[] powerCpuNormal = new double[speedSteps];
@@ -381,8 +416,9 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         }
         final double averageCostPerByte = getAverageDataCost();
         long uSecTime = mStats.computeBatteryRealtime(SystemClock.elapsedRealtime() * 1000, which);
+        long appWakelockTime = 0;
+        BatterySipper osApp = null;
         mStatsPeriod = uSecTime;
-        updateStatsPeriod(uSecTime);
         SparseArray<? extends Uid> uidStats = mStats.getUidStats();
         final int NU = uidStats.size();
         for (int iu = 0; iu < NU; iu++) {
@@ -456,6 +492,7 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
                 }
             }
             wakelockTime /= 1000; // convert to millis
+            appWakelockTime += wakelockTime;
 
             // Add cost of holding a wake lock
             power += (wakelockTime
@@ -503,8 +540,8 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
             if (DEBUG) Log.i(TAG, "UID " + u.getUid() + ": power=" + power);
 
             // Add the app to the list if it is consuming power
-            if (power != 0) {
-                BatterySipper app = new BatterySipper(this, mRequestQueue, mHandler,
+            if (power != 0 || u.getUid() == 0) {
+                BatterySipper app = new BatterySipper(getActivity(), mRequestQueue, mHandler,
                         packageWithHighestDrain, DrainType.APP, 0, u,
                         new double[] {power});
                 app.cpuTime = cpuTime;
@@ -521,6 +558,9 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
                 } else {
                     mUsageList.add(app);
                 }
+                if (u.getUid() == 0) {
+                    osApp = app;
+                }
             }
             if (u.getUid() == Process.WIFI_UID) {
                 mWifiPower += power;
@@ -532,13 +572,33 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
             }
             if (DEBUG) Log.i(TAG, "Added power = " + power);
         }
+
+        // The device has probably been awake for longer than the screen on
+        // time and application wake lock time would account for.  Assign
+        // this remainder to the OS, if possible.
+        if (osApp != null) {
+            long wakeTimeMillis = mStats.computeBatteryUptime(
+                    SystemClock.uptimeMillis() * 1000, which) / 1000;
+            wakeTimeMillis -= appWakelockTime + (mStats.getScreenOnTime(
+                    SystemClock.elapsedRealtime(), which) / 1000);
+            if (wakeTimeMillis > 0) {
+                double power = (wakeTimeMillis
+                        * mPowerProfile.getAveragePower(PowerProfile.POWER_CPU_AWAKE)) / 1000;
+                if (DEBUG) Log.i(TAG, "OS wakeLockTime " + wakeTimeMillis + " power " + power);
+                osApp.wakeLockTime += wakeTimeMillis;
+                osApp.value += power;
+                osApp.values[0] += power;
+                if (osApp.value > mMaxPower) mMaxPower = osApp.value;
+                mTotalPower += power;
+            }
+        }
     }
 
     private void addPhoneUsage(long uSecNow) {
         long phoneOnTimeMs = mStats.getPhoneOnTime(uSecNow, mStatsType) / 1000;
         double phoneOnPower = mPowerProfile.getAveragePower(PowerProfile.POWER_RADIO_ACTIVE)
                 * phoneOnTimeMs / 1000;
-        addEntry(getString(R.string.power_phone), DrainType.PHONE, phoneOnTimeMs,
+        addEntry(getActivity().getString(R.string.power_phone), DrainType.PHONE, phoneOnTimeMs,
                 R.drawable.ic_settings_voice_calls, phoneOnPower);
     }
 
@@ -559,13 +619,13 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
             }
         }
         power /= 1000; // To seconds
-        addEntry(getString(R.string.power_screen), DrainType.SCREEN, screenOnTimeMs,
+        addEntry(getActivity().getString(R.string.power_screen), DrainType.SCREEN, screenOnTimeMs,
                 R.drawable.ic_settings_display, power);
     }
 
     private void addRadioUsage(long uSecNow) {
         double power = 0;
-        final int BINS = BatteryStats.NUM_SIGNAL_STRENGTH_BINS;
+        final int BINS = SignalStrength.NUM_SIGNAL_STRENGTH_BINS;
         long signalTimeMs = 0;
         for (int i = 0; i < BINS; i++) {
             long strengthTimeMs = mStats.getPhoneSignalStrengthTime(i, uSecNow, mStatsType) / 1000;
@@ -577,8 +637,8 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         power += scanningTimeMs / 1000 * mPowerProfile.getAveragePower(
                 PowerProfile.POWER_RADIO_SCANNING);
         BatterySipper bs =
-                addEntry(getString(R.string.power_cell), DrainType.CELL, signalTimeMs,
-                R.drawable.ic_settings_cell_standby, power);
+                addEntry(getActivity().getString(R.string.power_cell), DrainType.CELL,
+                        signalTimeMs, R.drawable.ic_settings_cell_standby, power);
         if (signalTimeMs != 0) {
             bs.noCoveragePercent = mStats.getPhoneSignalStrengthTime(0, uSecNow, mStatsType)
                     / 1000 * 100.0 / signalTimeMs;
@@ -610,8 +670,8 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
                 * mPowerProfile.getAveragePower(PowerProfile.POWER_WIFI_ON)
             + runningTimeMs * mPowerProfile.getAveragePower(PowerProfile.POWER_WIFI_ON)) / 1000;
         if (DEBUG) Log.i(TAG, "WIFI power=" + wifiPower + " from procs=" + mWifiPower);
-        BatterySipper bs = addEntry(getString(R.string.power_wifi), DrainType.WIFI, runningTimeMs,
-                R.drawable.ic_settings_wifi, wifiPower + mWifiPower);
+        BatterySipper bs = addEntry(getActivity().getString(R.string.power_wifi), DrainType.WIFI,
+                runningTimeMs, R.drawable.ic_settings_wifi, wifiPower + mWifiPower);
         aggregateSippers(bs, mWifiSippers, "WIFI");
     }
 
@@ -619,7 +679,7 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         long idleTimeMs = (uSecNow - mStats.getScreenOnTime(uSecNow, mStatsType)) / 1000;
         double idlePower = (idleTimeMs * mPowerProfile.getAveragePower(PowerProfile.POWER_CPU_IDLE))
                 / 1000;
-        addEntry(getString(R.string.power_idle), DrainType.IDLE, idleTimeMs,
+        addEntry(getActivity().getString(R.string.power_idle), DrainType.IDLE, idleTimeMs,
                 R.drawable.ic_settings_phone_idle, idlePower);
     }
 
@@ -630,8 +690,9 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         int btPingCount = mStats.getBluetoothPingCount();
         btPower += (btPingCount
                 * mPowerProfile.getAveragePower(PowerProfile.POWER_BLUETOOTH_AT_CMD)) / 1000;
-        BatterySipper bs = addEntry(getString(R.string.power_bluetooth), DrainType.BLUETOOTH,
-                btOnTimeMs, R.drawable.ic_settings_bluetooth, btPower + mBluetoothPower);
+        BatterySipper bs = addEntry(getActivity().getString(R.string.power_bluetooth),
+                DrainType.BLUETOOTH, btOnTimeMs, R.drawable.ic_settings_bluetooth,
+                btPower + mBluetoothPower);
         aggregateSippers(bs, mBluetoothSippers, "Bluetooth");
     }
 
@@ -675,14 +736,17 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
         addWiFiUsage(uSecNow);
         addBluetoothUsage(uSecNow);
         addIdleUsage(uSecNow); // Not including cellular idle power
-        addRadioUsage(uSecNow);
+        // Don't compute radio usage if it's a wifi-only device
+        if (!com.android.settings.Utils.isWifiOnly(getActivity())) {
+            addRadioUsage(uSecNow);
+        }
     }
 
     private BatterySipper addEntry(String label, DrainType drainType, long time, int iconId,
             double power) {
         if (power > mMaxPower) mMaxPower = power;
         mTotalPower += power;
-        BatterySipper bs = new BatterySipper(this, mRequestQueue, mHandler,
+        BatterySipper bs = new BatterySipper(getActivity(), mRequestQueue, mHandler,
                 label, drainType, iconId, null, new double[] {power});
         bs.usageTime = time;
         bs.iconId = iconId;
@@ -732,7 +796,6 @@ public class PowerUsageSummary extends PreferenceActivity implements Runnable {
                                     Integer.toString(bs.uidObj.getUid()));
                     if (pgp != null) {
                         pgp.setIcon(bs.icon);
-                        pgp.setPercent(bs.percent);
                         pgp.setTitle(bs.name);
                     }
                     break;

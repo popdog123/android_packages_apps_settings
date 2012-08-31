@@ -15,9 +15,25 @@
 -->
 
 <resources>
-    <dimen name="vpn_connect_margin_right">10sp</dimen>
-    <dimen name="vpn_connect_normal_text_size">16sp</dimen>
-    <dimen name="vpn_connect_input_box_label_width">90sp</dimen>
+    <dimen name="device_memory_usage_button_width">16dip</dimen>
+    <dimen name="device_memory_usage_button_height">32dip</dimen>
+    <dimen name="action_bar_switch_padding">16dip</dimen>
+
+    <dimen name="app_icon_size">56dip</dimen>
+    <dimen name="screen_margin_sides">64dip</dimen>
+    <dimen name="screen_margin_top">72dip</dimen>
+    <dimen name="screen_margin_bottom">48dip</dimen>
+    <dimen name="title_height">48dip</dimen>
+    <dimen name="content_margin_left">16dip</dimen>
+    <dimen name="description_margin_top">26dip</dimen>
+    <dimen name="description_margin_sides">40dip</dimen>
+
+    <dimen name="data_usage_chart_height">252dip</dimen>
+    <dimen name="data_usage_chart_optimalWidth">440dip</dimen>
+
+    <dimen name="volume_seekbar_side_margin">8dip</dimen>
+
+    <dimen name="crypt_clock_size">100sp</dimen>
 
     <!-- height of a normal list item in edit playlist mode -->
     <dimen name="normal_height">64dip</dimen>

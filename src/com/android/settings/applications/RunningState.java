@@ -28,13 +28,11 @@ import android.content.pm.PackageItemInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
-import android.os.Debug;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
-import android.os.SystemClock;
 import android.text.format.Formatter;
 import android.util.Log;
 import android.util.SparseArray;
@@ -54,9 +52,10 @@ public class RunningState {
     static Object sGlobalLock = new Object();
     static RunningState sInstance;
 
-    static final int MSG_UPDATE_CONTENTS = 1;
-    static final int MSG_REFRESH_UI = 2;
-    static final int MSG_UPDATE_TIME = 3;
+    static final int MSG_RESET_CONTENTS = 1;
+    static final int MSG_UPDATE_CONTENTS = 2;
+    static final int MSG_REFRESH_UI = 3;
+    static final int MSG_UPDATE_TIME = 4;
 
     static final long TIME_UPDATE_DELAY = 1000;
     static final long CONTENTS_UPDATE_DELAY = 2000;
@@ -68,6 +67,8 @@ public class RunningState {
     final PackageManager mPm;
 
     OnRefreshUiListener mRefreshUiListener;
+
+    final InterestingConfigChanges mInterestingConfigChanges = new InterestingConfigChanges();
 
     // Processes that are hosting a service we are interested in, organized
     // by uid and name.  Note that this mapping does not change even across
@@ -98,7 +99,20 @@ public class RunningState {
     
     // All processes, used for retrieving memory information.
     final ArrayList<ProcessItem> mAllProcessItems = new ArrayList<ProcessItem>();
-    
+
+    static class AppProcessInfo {
+        final ActivityManager.RunningAppProcessInfo info;
+        boolean hasServices;
+        boolean hasForegroundServices;
+
+        AppProcessInfo(ActivityManager.RunningAppProcessInfo _info) {
+            info = _info;
+        }
+    }
+
+    // Temporary structure used when updating above information.
+    final SparseArray<AppProcessInfo> mTmpAppProcesses = new SparseArray<AppProcessInfo>();
+
     int mSequence = 0;
     
     // ----- following protected by mLock -----
@@ -133,6 +147,9 @@ public class RunningState {
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
+                case MSG_RESET_CONTENTS:
+                    reset();
+                    break;
                 case MSG_UPDATE_CONTENTS:
                     synchronized (mLock) {
                         if (!mResumed) {
@@ -245,7 +262,9 @@ public class RunningState {
         ActivityManager.RunningAppProcessInfo mRunningProcessInfo;
         
         MergedItem mMergedItem;
-        
+
+        boolean mInteresting;
+
         // Purely for sorting.
         boolean mIsSystem;
         boolean mIsStarted;
@@ -383,8 +402,8 @@ public class RunningState {
             return changed;
         }
         
-        boolean updateSize(Context context, Debug.MemoryInfo mem, int curSeq) {
-            mSize = ((long)mem.getTotalPss()) * 1024;
+        boolean updateSize(Context context, long pss, int curSeq) {
+            mSize = pss * 1024;
             if (mCurSeq == curSeq) {
                 String sizeStr = Formatter.formatShortFileSize(
                         context, mSize);
@@ -561,6 +580,12 @@ public class RunningState {
         synchronized (mLock) {
             mResumed = true;
             mRefreshUiListener = listener;
+            if (mInterestingConfigChanges.applyNewConfig(mApplicationContext.getResources())) {
+                mHaveData = false;
+                mBackgroundHandler.removeMessages(MSG_RESET_CONTENTS);
+                mBackgroundHandler.removeMessages(MSG_UPDATE_CONTENTS);
+                mBackgroundHandler.sendEmptyMessage(MSG_RESET_CONTENTS);
+            }
             if (!mBackgroundHandler.hasMessages(MSG_UPDATE_CONTENTS)) {
                 mBackgroundHandler.sendEmptyMessage(MSG_UPDATE_CONTENTS);
             }
@@ -605,12 +630,22 @@ public class RunningState {
             return true;
         }
         if ((pi.flags&ActivityManager.RunningAppProcessInfo.FLAG_PERSISTENT) == 0
-                && pi.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                && pi.importance >= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                && pi.importance < ActivityManager.RunningAppProcessInfo.IMPORTANCE_CANT_SAVE_STATE
                 && pi.importanceReasonCode
                         == ActivityManager.RunningAppProcessInfo.REASON_UNKNOWN) {
             return true;
         }
         return false;
+    }
+
+    private void reset() {
+        mServiceProcessesByName.clear();
+        mServiceProcessesByPid.clear();
+        mInterestingProcesses.clear();
+        mRunningProcesses.clear();
+        mProcessItems.clear();
+        mAllProcessItems.clear();
     }
 
     private boolean update(Context context, ActivityManager am) {
@@ -619,25 +654,97 @@ public class RunningState {
         mSequence++;
         
         boolean changed = false;
-        
+
+        // Retrieve list of services, filtering out anything that definitely
+        // won't be shown in the UI.
         List<ActivityManager.RunningServiceInfo> services 
                 = am.getRunningServices(MAX_SERVICES);
-        final int NS = services != null ? services.size() : 0;
+        int NS = services != null ? services.size() : 0;
         for (int i=0; i<NS; i++) {
             ActivityManager.RunningServiceInfo si = services.get(i);
             // We are not interested in services that have not been started
             // and don't have a known client, because
             // there is nothing the user can do about them.
             if (!si.started && si.clientLabel == 0) {
+                services.remove(i);
+                i--;
+                NS--;
                 continue;
             }
             // We likewise don't care about services running in a
             // persistent process like the system or phone.
             if ((si.flags&ActivityManager.RunningServiceInfo.FLAG_PERSISTENT_PROCESS)
                     != 0) {
+                services.remove(i);
+                i--;
+                NS--;
                 continue;
             }
-            
+        }
+
+        // Retrieve list of running processes, organizing them into a sparse
+        // array for easy retrieval.
+        List<ActivityManager.RunningAppProcessInfo> processes
+                = am.getRunningAppProcesses();
+        final int NP = processes != null ? processes.size() : 0;
+        mTmpAppProcesses.clear();
+        for (int i=0; i<NP; i++) {
+            ActivityManager.RunningAppProcessInfo pi = processes.get(i);
+            mTmpAppProcesses.put(pi.pid, new AppProcessInfo(pi));
+        }
+
+        // Initial iteration through running services to collect per-process
+        // info about them.
+        for (int i=0; i<NS; i++) {
+            ActivityManager.RunningServiceInfo si = services.get(i);
+            if (si.restarting == 0 && si.pid > 0) {
+                AppProcessInfo ainfo = mTmpAppProcesses.get(si.pid);
+                if (ainfo != null) {
+                    ainfo.hasServices = true;
+                    if (si.foreground) {
+                        ainfo.hasForegroundServices = true;
+                    }
+                }
+            }
+        }
+
+        // Update state we are maintaining about process that are running services.
+        for (int i=0; i<NS; i++) {
+            ActivityManager.RunningServiceInfo si = services.get(i);
+
+            // If this service's process is in use at a higher importance
+            // due to another process bound to one of its services, then we
+            // won't put it in the top-level list of services.  Instead we
+            // want it to be included in the set of processes that the other
+            // process needs.
+            if (si.restarting == 0 && si.pid > 0) {
+                AppProcessInfo ainfo = mTmpAppProcesses.get(si.pid);
+                if (ainfo != null && !ainfo.hasForegroundServices) {
+                    // This process does not have any foreground services.
+                    // If its importance is greater than the service importance
+                    // then there is something else more significant that is
+                    // keeping it around that it should possibly be included as
+                    // a part of instead of being shown by itself.
+                    if (ainfo.info.importance
+                            < ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE) {
+                        // Follow process chain to see if there is something
+                        // else that could be shown
+                        boolean skip = false;
+                        ainfo = mTmpAppProcesses.get(ainfo.info.importanceReasonPid);
+                        while (ainfo != null) {
+                            if (ainfo.hasServices || isInterestingProcess(ainfo.info)) {
+                                skip = true;
+                                break;
+                            }
+                            ainfo = mTmpAppProcesses.get(ainfo.info.importanceReasonPid);
+                        }
+                        if (skip) {
+                            continue;
+                        }
+                    }
+                }
+            }
+
             HashMap<String, ProcessItem> procs = mServiceProcessesByName.get(si.uid);
             if (procs == null) {
                 procs = new HashMap<String, ProcessItem>();
@@ -672,9 +779,6 @@ public class RunningState {
         
         // Now update the map of other processes that are running (but
         // don't have services actively running inside them).
-        List<ActivityManager.RunningAppProcessInfo> processes
-                = am.getRunningAppProcesses();
-        final int NP = processes != null ? processes.size() : 0;
         for (int i=0; i<NP; i++) {
             ActivityManager.RunningAppProcessInfo pi = processes.get(i);
             ProcessItem proc = mServiceProcessesByPid.get(pi.pid);
@@ -698,17 +802,20 @@ public class RunningState {
                     mInterestingProcesses.add(proc);
                 }
                 proc.mCurSeq = mSequence;
+                proc.mInteresting = true;
                 proc.ensureLabel(pm);
+            } else {
+                proc.mInteresting = false;
             }
             
             proc.mRunningSeq = mSequence;
             proc.mRunningProcessInfo = pi;
         }
-        
+
         // Build the chains from client processes to the process they are
         // dependent on; also remove any old running processes.
         int NRP = mRunningProcesses.size();
-        for (int i=0; i<NRP; i++) {
+        for (int i = 0; i < NRP;) {
             ProcessItem proc = mRunningProcesses.valueAt(i);
             if (proc.mRunningSeq == mSequence) {
                 int clientPid = proc.mRunningProcessInfo.importanceReasonPid;
@@ -726,9 +833,11 @@ public class RunningState {
                     // we will detect the change.
                     proc.mClient = null;
                 }
+                i++;
             } else {
                 changed = true;
                 mRunningProcesses.remove(mRunningProcesses.keyAt(i));
+                NRP--;
             }
         }
         
@@ -736,7 +845,7 @@ public class RunningState {
         int NHP = mInterestingProcesses.size();
         for (int i=0; i<NHP; i++) {
             ProcessItem proc = mInterestingProcesses.get(i);
-            if (mRunningProcesses.get(proc.mPid) == null) {
+            if (!proc.mInteresting || mRunningProcesses.get(proc.mPid) == null) {
                 changed = true;
                 mInterestingProcesses.remove(i);
                 i--;
@@ -756,6 +865,7 @@ public class RunningState {
         }
         
         // Look for services and their primary processes that no longer exist...
+        ArrayList<Integer> uidToDelete = null;
         for (int i=0; i<mServiceProcessesByName.size(); i++) {
             HashMap<String, ProcessItem> procs = mServiceProcessesByName.valueAt(i);
             Iterator<ProcessItem> pit = procs.values().iterator();
@@ -772,7 +882,10 @@ public class RunningState {
                     changed = true;
                     pit.remove();
                     if (procs.size() == 0) {
-                        mServiceProcessesByName.remove(mServiceProcessesByName.keyAt(i));
+                        if (uidToDelete == null) {
+                            uidToDelete = new ArrayList<Integer>();
+                        }
+                        uidToDelete.add(mServiceProcessesByName.keyAt(i));
                     }
                     if (pi.mPid != 0) {
                         mServiceProcessesByPid.remove(pi.mPid);
@@ -790,6 +903,13 @@ public class RunningState {
             }
         }
         
+        if (uidToDelete != null) {
+            for (int i = 0; i < uidToDelete.size(); i++) {
+                int uid = uidToDelete.get(i);
+                mServiceProcessesByName.remove(uid);
+            }
+        }
+
         if (changed) {
             // First determine an order for the services.
             ArrayList<ProcessItem> sortedProcesses = new ArrayList<ProcessItem>();
@@ -933,12 +1053,12 @@ public class RunningState {
             for (int i=0; i<numProc; i++) {
                 pids[i] = mAllProcessItems.get(i).mPid;
             }
-            Debug.MemoryInfo[] mem = ActivityManagerNative.getDefault()
-                    .getProcessMemoryInfo(pids);
+            long[] pss = ActivityManagerNative.getDefault()
+                    .getProcessPss(pids);
             int bgIndex = 0;
             for (int i=0; i<pids.length; i++) {
                 ProcessItem proc = mAllProcessItems.get(i);
-                changed |= proc.updateSize(context, mem[i], mSequence);
+                changed |= proc.updateSize(context, pss[i], mSequence);
                 if (proc.mCurSeq == mSequence) {
                     serviceProcessMemory += proc.mSize;
                 } else if (proc.mRunningProcessInfo.importance >=
@@ -975,7 +1095,7 @@ public class RunningState {
         }
         
         if (newBackgroundItems == null) {
-            // One or more at the bottom may no longer exit.
+            // One or more at the bottom may no longer exist.
             if (mBackgroundItems.size() > numBackgroundProcesses) {
                 newBackgroundItems = new ArrayList<MergedItem>(numBackgroundProcesses);
                 for (int bgi=0; bgi<numBackgroundProcesses; bgi++) {

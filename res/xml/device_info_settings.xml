@@ -17,13 +17,19 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
         android:title="@string/about_settings">
 
-        <!-- Additional System Update menu -->
+        <!-- System update settings - launches activity -->
+<!--        <PreferenceScreen android:key="system_update_settings"
+                android:title="@string/system_update_settings_list_item_title" 
+                android:summary="@string/system_update_settings_list_item_summary">
+            <intent android:action="android.settings.SYSTEM_UPDATE_SETTINGS" />
+        </PreferenceScreen>-->
+
+
         <PreferenceScreen android:key="additional_system_update_settings"
-                android:title="@string/additional_system_update_settings_list_item_title">
-            <intent
-                android:action="android.intent.action.MAIN"
-                android:targetPackage="@string/additional_system_update"
-                android:targetClass="@string/additional_system_update_menu" />
+                          android:title="@string/additional_system_update_settings_list_item_title">
+            <intent android:action="android.intent.action.MAIN"
+                    android:targetPackage="@string/additional_system_update"
+                    android:targetClass="@string/additional_system_update_menu" />
         </PreferenceScreen>
 
         <!-- Device status - launches activity -->
@@ -33,15 +39,6 @@
             <intent android:action="android.intent.action.MAIN"
                     android:targetPackage="com.android.settings"
                     android:targetClass="com.android.settings.deviceinfo.Status" />
-        </PreferenceScreen>
-        
-        <PreferenceScreen
-                android:key="power_usage"
-                android:title="@string/power_usage_summary_title"
-                android:summary="@string/power_usage_summary">
-            <intent android:action="android.intent.action.MAIN"
-                    android:targetPackage="com.android.settings"
-                    android:targetClass="com.android.settings.fuelgauge.PowerUsageSummary" />
         </PreferenceScreen>
 
         <!-- Legal Information -->
@@ -91,13 +88,7 @@
             <intent android:action="android.settings.TEAM" />
         </PreferenceScreen>
         -->
-        <!-- System Tutorial - launches activity -->
-        <PreferenceScreen android:key="system_tutorial"
-                android:title="@string/system_tutorial_list_item_title" 
-                android:summary="@string/system_tutorial_list_item_summary">
-            <intent android:action="android.intent.action.SYSTEM_TUTORIAL" />
-        </PreferenceScreen>
-        
+
         <!-- Device hardware model -->
         <Preference android:key="device_model" 
                 style="?android:preferenceInformationStyle"
@@ -109,7 +100,7 @@
                 style="?android:preferenceInformationStyle"
                 android:title="@string/firmware_version"
                 android:summary="@string/device_info_default"/>
-                
+
         <!-- Device Baseband version -->
         <Preference android:key="baseband_version" 
                 style="?android:preferenceInformationStyle"
@@ -128,6 +119,11 @@
                 android:title="@string/mod_version"
                 android:summary="@string/mod_version_default" />
 
+        <!-- Mod build date -->
+        <Preference android:key="build_date"
+                style="?android:preferenceInformationStyle"
+                android:title="@string/build_date"
+                android:summary="@string/build_date_default" />
 
         <!-- Detailed build version -->
         <Preference android:key="build_number" 

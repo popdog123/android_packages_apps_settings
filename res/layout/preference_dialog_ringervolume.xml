@@ -17,90 +17,176 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
-        
+
     <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
             android:gravity="center_horizontal"
-            android:paddingBottom="20dip">
-            
+            android:paddingBottom="12dip"
+            android:paddingTop="12dip">
+
         <ImageView android:id="@android:id/icon"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingTop="20dip" />
-                
-        <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/incoming_call_volume_title"
-                android:paddingTop="10dip"
-                android:paddingLeft="20dip" 
-                android:paddingRight="20dip" />
-        
-        <!-- Used for the ring volume.  This is what the superclass VolumePreference uses. -->
+                android:paddingTop="20dip"
+                android:visibility="gone"/>
+
+        <!-- Dummy -->
         <SeekBar android:id="@*android:id/seekbar"
-                android:layout_width="match_parent"
+                android:layout_width="0dip"
                 android:layout_height="wrap_content"
-                android:paddingTop="2dip"
-                android:paddingLeft="20dip" 
-                android:paddingRight="20dip" />
-            
-        <!-- Used for the media volume -->
+                android:layout_weight="1"
+                android:visibility="gone" />
+
         <TextView
+                android:textAppearance="?android:attr/textAppearanceSmall"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingLeft="16dip"
+                android:layout_gravity="left"
+                android:text="@string/volume_media_description"
+            />
+
+        <!-- Used for the media volume -->
+        <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/media_volume_title"
-                android:paddingTop="10dip"
-                android:paddingLeft="20dip" 
-                android:paddingRight="20dip" />
-        <SeekBar android:id="@+id/media_volume_seekbar"
+                android:paddingLeft="8dip"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageView android:id="@+id/media_mute_button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:padding="16dip"
+                        android:background="?android:attr/selectableItemBackground"
+                    />
+
+                <SeekBar android:id="@+id/media_volume_seekbar"
+                        android:layout_width="0dip"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:paddingTop="2dip"
+                        android:layout_marginRight="@dimen/volume_seekbar_side_margin" />
+        </LinearLayout>
+
+        <!-- Used for the ringer/notification volume -->
+        <LinearLayout
+                android:id="@+id/ringer_section"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:paddingTop="2dip"
-                android:paddingLeft="20dip"
-                android:paddingRight="20dip" />
+                android:orientation="vertical">
+
+            <TextView
+                    android:id="@+id/ringer_description_text"
+                    android:textAppearance="?android:attr/textAppearanceSmall"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dip"
+                    android:paddingLeft="16dip"
+                    android:layout_gravity="left"
+                    android:text="@string/volume_ring_description"
+                />
+
+            <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingLeft="8dip"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <ImageView android:id="@+id/ringer_mute_button"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="16dip"
+                            android:background="?android:attr/selectableItemBackground"
+                        />
+
+                    <SeekBar android:id="@+id/ringer_volume_seekbar"
+                            android:layout_width="0dip"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingTop="2dip"
+                            android:layout_marginRight="@dimen/volume_seekbar_side_margin" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Used for the notification volume -->
+        <LinearLayout
+                android:id="@+id/notification_section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+            <TextView
+                    android:id="@+id/notification_description_text"
+                    android:textAppearance="?android:attr/textAppearanceSmall"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dip"
+                    android:paddingLeft="16dip"
+                    android:layout_gravity="left"
+                    android:text="@string/volume_notification_description"
+                />
+
+            <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingLeft="8dip"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <ImageView android:id="@+id/notification_mute_button"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="16dip"
+                            android:background="?android:attr/selectableItemBackground"
+                        />
+
+                    <SeekBar android:id="@+id/notification_volume_seekbar"
+                            android:layout_width="0dip"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingTop="2dip"
+                            android:layout_marginRight="@dimen/volume_seekbar_side_margin" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <TextView
+                android:textAppearance="?android:attr/textAppearanceSmall"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dip"
+                android:paddingLeft="16dip"
+                android:layout_gravity="left"
+                android:text="@string/volume_alarm_description"
+            />
 
         <!-- Used for the alarm volume -->
-        <TextView
+        <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/alarm_volume_title"
-                android:paddingTop="10dip"
-                android:paddingLeft="20dip" 
-                android:paddingRight="20dip" />
-        <SeekBar android:id="@+id/alarm_volume_seekbar"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="2dip"
-                android:paddingLeft="20dip" 
-                android:paddingRight="20dip" />
+                android:paddingLeft="8dip"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-        <CheckBox android:id="@+id/same_notification_volume"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/checkbox_notification_same_as_incoming_call"
-                android:textAppearance="?android:attr/textAppearanceSmall"
-                android:layout_marginTop="6dip"
-                android:layout_marginLeft="20dip" 
-                android:layout_marginRight="20dip" />
-    
-        <TextView android:id="@+id/notification_volume_title"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/notification_volume_title"
-                android:paddingTop="6dip"
-                android:paddingLeft="20dip" 
-                android:paddingRight="20dip" />
-        
-        <!-- Used for the notification volume -->
-        <SeekBar android:id="@+id/notification_volume_seekbar"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="2dip"
-                android:paddingLeft="20dip" 
-                android:paddingRight="20dip" />
-        
+                <ImageView android:id="@+id/alarm_mute_button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:padding="16dip"
+                        android:background="?android:attr/selectableItemBackground"
+                    />
+                <SeekBar android:id="@+id/alarm_volume_seekbar"
+                        android:layout_width="0dip"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:paddingTop="2dip"
+                        android:layout_marginRight="@dimen/volume_seekbar_side_margin" />
+        </LinearLayout>
+
     </LinearLayout>
-     
-</ScrollView>    
+
+</ScrollView>

@@ -19,4 +19,10 @@
     <string name="discoverable" msgid="3169265480789026010">"Видимий"</string>
     <string name="start_scan" msgid="6035699220942169744">"Поч. сканув."</string>
     <string name="stop_scan" msgid="527546916633745779">"Зупин. скан."</string>
+    <string name="operator_hello" msgid="292208161864910159">"Вітаємо, операторе!"</string>
+    <string name="operator_settings_title" msgid="1410094511974808567">"Оператор"</string>
+    <string name="operator_settings_summary" msgid="5916597343019392258">"Обробник оператора, який можна використати, щоб почати вибір"</string>
+    <string name="manufacturer_hello" msgid="7525744633645544137">"Вітаємо, виробнику!"</string>
+    <string name="manufacturer_settings_title" msgid="2503105049808838612">"Виробник"</string>
+    <string name="manufacturer_settings_summary" msgid="766746044826063472">"Обробник виробника, який можна використати, щоб почати вибір"</string>
 </resources>

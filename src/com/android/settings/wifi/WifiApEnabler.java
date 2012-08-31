@@ -33,14 +33,13 @@ import android.net.wifi.SupplicantState;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
-import android.preference.Preference;
 import android.preference.CheckBoxPreference;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
 import android.widget.Toast;
 
-public class WifiApEnabler implements Preference.OnPreferenceChangeListener {
+public class WifiApEnabler {
     private final Context mContext;
     private final CheckBoxPreference mCheckBox;
     private final CharSequence mOriginalSummary;
@@ -66,6 +65,8 @@ public class WifiApEnabler implements Preference.OnPreferenceChangeListener {
                 ArrayList<String> errored = intent.getStringArrayListExtra(
                         ConnectivityManager.EXTRA_ERRORED_TETHER);
                 updateTetherState(available.toArray(), active.toArray(), errored.toArray());
+            } else if (Intent.ACTION_AIRPLANE_MODE_CHANGED.equals(action)) {
+                enableWifiCheckBox();
             }
 
         }
@@ -84,17 +85,16 @@ public class WifiApEnabler implements Preference.OnPreferenceChangeListener {
 
         mIntentFilter = new IntentFilter(WifiManager.WIFI_AP_STATE_CHANGED_ACTION);
         mIntentFilter.addAction(ConnectivityManager.ACTION_TETHER_STATE_CHANGED);
+        mIntentFilter.addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED);
     }
 
     public void resume() {
         mContext.registerReceiver(mReceiver, mIntentFilter);
         enableWifiCheckBox();
-        mCheckBox.setOnPreferenceChangeListener(this);
     }
 
     public void pause() {
         mContext.unregisterReceiver(mReceiver);
-        mCheckBox.setOnPreferenceChangeListener(null);
     }
 
     private void enableWifiCheckBox() {
@@ -103,15 +103,13 @@ public class WifiApEnabler implements Preference.OnPreferenceChangeListener {
         if(!isAirplaneMode) {
             mCheckBox.setEnabled(true);
         } else {
+            mCheckBox.setSummary(mOriginalSummary);
             mCheckBox.setEnabled(false);
         }
     }
 
-    public boolean onPreferenceChange(Preference preference, Object value) {
-
+    public void setSoftapEnabled(boolean enable) {
         final ContentResolver cr = mContext.getContentResolver();
-        boolean enable = (Boolean)value;
-
         /**
          * Disable Wifi if enabling tethering
          */
@@ -144,11 +142,9 @@ public class WifiApEnabler implements Preference.OnPreferenceChangeListener {
                 Settings.Secure.putInt(cr, Settings.Secure.WIFI_SAVED_STATE, 0);
             }
         }
-
-        return false;
     }
 
-    void updateConfigSummary(WifiConfiguration wifiConfig) {
+    public void updateConfigSummary(WifiConfiguration wifiConfig) {
         String s = mContext.getString(
                 com.android.internal.R.string.wifi_tether_configure_ssid_default);
         mCheckBox.setSummary(String.format(

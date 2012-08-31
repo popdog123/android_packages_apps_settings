@@ -173,6 +173,7 @@ public class BatteryHistoryChart extends View {
     int mBatHigh;
     boolean mHaveWifi;
     boolean mHaveGps;
+    boolean mHavePhoneSignal;
     
     public BatteryHistoryChart(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -367,9 +368,9 @@ public class BatteryHistoryChart extends View {
                     }
                     if (rec.batteryLevel != lastLevel || pos == 1) {
                         lastLevel = rec.batteryLevel;
-                        lastInteresting = pos;
-                        mHistEnd = rec.time;
                     }
+                    lastInteresting = pos;
+                    mHistEnd = rec.time;
                     aggrStates |= rec.states;
                 }
             }
@@ -377,7 +378,9 @@ public class BatteryHistoryChart extends View {
         mNumHist = lastInteresting;
         mHaveGps = (aggrStates&HistoryItem.STATE_GPS_ON_FLAG) != 0;
         mHaveWifi = (aggrStates&HistoryItem.STATE_WIFI_RUNNING_FLAG) != 0;
-        
+        if (!com.android.settings.Utils.isWifiOnly(getContext())) {
+            mHavePhoneSignal = true;
+        }
         if (mHistEnd <= mHistStart) mHistEnd = mHistStart+1;
         mTotalDurationString = Utils.formatElapsedTime(getContext(), mHistEnd - mHistStart);
     }
@@ -421,7 +424,9 @@ public class BatteryHistoryChart extends View {
         if (lastWakeLock) {
             mWakeLockPath.lineTo(w, h-mWakeLockOffset);
         }
-        mPhoneSignalChart.finish(w);
+        if (mHavePhoneSignal) {
+            mPhoneSignalChart.finish(w);
+        }
     }
     
     @Override
@@ -433,7 +438,13 @@ public class BatteryHistoryChart extends View {
                 2, getResources().getDisplayMetrics());
         if (h > (textHeight*6)) {
             mLargeMode = true;
-            mLineWidth = textHeight/2;
+            if (h > (textHeight*15)) {
+                // Plenty of room for the chart.
+                mLineWidth = textHeight/2;
+            } else {
+                // Compress lines to make more room for chart.
+                mLineWidth = textHeight/3;
+            }
             mLevelTop = textHeight + mLineWidth;
             mScreenOnPaint.setARGB(255, 32, 64, 255);
             mGpsOnPaint.setARGB(255, 32, 64, 255);
@@ -467,15 +478,20 @@ public class BatteryHistoryChart extends View {
             mWifiRunningOffset = mWakeLockOffset + barOffset;
             mGpsOnOffset = mWifiRunningOffset + (mHaveWifi ? barOffset : 0);
             mPhoneSignalOffset = mGpsOnOffset + (mHaveGps ? barOffset : 0);
-            mLevelOffset = mPhoneSignalOffset + barOffset + mLineWidth;
-            mPhoneSignalChart.init(w);
+            mLevelOffset = mPhoneSignalOffset + (mHavePhoneSignal ? barOffset : 0)
+                    + ((mLineWidth*3)/2);
+            if (mHavePhoneSignal) {
+                mPhoneSignalChart.init(w);
+            }
         } else {
             mScreenOnOffset = mGpsOnOffset = mWifiRunningOffset
                     = mWakeLockOffset = mLineWidth;
             mChargingOffset = mLineWidth*2;
             mPhoneSignalOffset = 0;
             mLevelOffset = mLineWidth*3;
-            mPhoneSignalChart.init(0);
+            if (mHavePhoneSignal) {
+                mPhoneSignalChart.init(0);
+            }
         }
 
         mBatLevelPath.reset();
@@ -597,7 +613,7 @@ public class BatteryHistoryChart extends View {
                             lastWakeLock = wakeLock;
                         }
 
-                        if (mLargeMode) {
+                        if (mLargeMode && mHavePhoneSignal) {
                             int bin;
                             if (((rec.states&HistoryItem.STATE_PHONE_STATE_MASK)
                                     >> HistoryItem.STATE_PHONE_STATE_SHIFT)
@@ -661,8 +677,10 @@ public class BatteryHistoryChart extends View {
         if (!mBatCriticalPath.isEmpty()) {
             canvas.drawPath(mBatCriticalPath, mBatteryCriticalPaint);
         }
-        int top = height-mPhoneSignalOffset - (mLineWidth/2);
-        mPhoneSignalChart.draw(canvas, top, mLineWidth);
+        if (mHavePhoneSignal) {
+            int top = height-mPhoneSignalOffset - (mLineWidth/2);
+            mPhoneSignalChart.draw(canvas, top, mLineWidth);
+        }
         if (!mScreenOnPath.isEmpty()) {
             canvas.drawPath(mScreenOnPath, mScreenOnPaint);
         }
@@ -684,8 +702,10 @@ public class BatteryHistoryChart extends View {
         }
 
         if (mLargeMode) {
-            canvas.drawText(mPhoneSignalLabel, 0,
-                    height - mPhoneSignalOffset - mTextDescent, mTextPaint);
+            if (mHavePhoneSignal) {
+                canvas.drawText(mPhoneSignalLabel, 0,
+                        height - mPhoneSignalOffset - mTextDescent, mTextPaint);
+            }
             if (mHaveGps) {
                 canvas.drawText(mGpsOnLabel, 0,
                         height - mGpsOnOffset - mTextDescent, mTextPaint);

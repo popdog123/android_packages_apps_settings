@@ -71,6 +71,8 @@ public class ApplicationsState {
         long cacheSize;
         long codeSize;
         long dataSize;
+        long externalCodeSize;
+        long externalDataSize;
     }
     
     public static class AppEntry extends SizeInfo {
@@ -78,6 +80,8 @@ public class ApplicationsState {
         final long id;
         String label;
         long size;
+        long internalSize;
+        long externalSize;
 
         boolean mounted;
         
@@ -93,6 +97,8 @@ public class ApplicationsState {
         ApplicationInfo info;
         Drawable icon;
         String sizeStr;
+        String internalSizeStr;
+        String externalSizeStr;
         boolean sizeStale;
         long sizeLoadStart;
 
@@ -147,16 +153,42 @@ public class ApplicationsState {
         private final Collator sCollator = Collator.getInstance();
         @Override
         public int compare(AppEntry object1, AppEntry object2) {
+            if (object1.info.enabled != object2.info.enabled) {
+                return object1.info.enabled ? -1 : 1;
+            }
             return sCollator.compare(object1.label, object2.label);
         }
     };
 
-    public static final Comparator<AppEntry> SIZE_COMPARATOR = new Comparator<AppEntry>() {
+    public static final Comparator<AppEntry> SIZE_COMPARATOR
+            = new Comparator<AppEntry>() {
         private final Collator sCollator = Collator.getInstance();
         @Override
         public int compare(AppEntry object1, AppEntry object2) {
             if (object1.size < object2.size) return 1;
             if (object1.size > object2.size) return -1;
+            return sCollator.compare(object1.label, object2.label);
+        }
+    };
+
+    public static final Comparator<AppEntry> INTERNAL_SIZE_COMPARATOR
+            = new Comparator<AppEntry>() {
+        private final Collator sCollator = Collator.getInstance();
+        @Override
+        public int compare(AppEntry object1, AppEntry object2) {
+            if (object1.internalSize < object2.internalSize) return 1;
+            if (object1.internalSize > object2.internalSize) return -1;
+            return sCollator.compare(object1.label, object2.label);
+        }
+    };
+
+    public static final Comparator<AppEntry> EXTERNAL_SIZE_COMPARATOR
+            = new Comparator<AppEntry>() {
+        private final Collator sCollator = Collator.getInstance();
+        @Override
+        public int compare(AppEntry object1, AppEntry object2) {
+            if (object1.externalSize < object2.externalSize) return 1;
+            if (object1.externalSize > object2.externalSize) return -1;
             return sCollator.compare(object1.label, object2.label);
         }
     };
@@ -199,6 +231,7 @@ public class ApplicationsState {
 
     // Information about all applications.  Synchronize on mAppEntries
     // to protect access to these.
+    final InterestingConfigChanges mInterestingConfigChanges = new InterestingConfigChanges();
     final HashMap<String, AppEntry> mEntriesMap = new HashMap<String, AppEntry>();
     final ArrayList<AppEntry> mAppEntries = new ArrayList<AppEntry>();
     List<ApplicationInfo> mApplications = new ArrayList<ApplicationInfo>();
@@ -243,8 +276,7 @@ public class ApplicationsState {
              } else if (Intent.ACTION_PACKAGE_CHANGED.equals(actionStr)) {
                  Uri data = intent.getData();
                  String pkgName = data.getEncodedSchemeSpecificPart();
-                 removePackage(pkgName);
-                 addPackage(pkgName);
+                 invalidatePackage(pkgName);
              } else if (Intent.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE.equals(actionStr) ||
                      Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE.equals(actionStr)) {
                  // When applications become available or unavailable (perhaps because
@@ -261,8 +293,7 @@ public class ApplicationsState {
                  boolean avail = Intent.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE.equals(actionStr);
                  if (avail) {
                      for (String pkgName : pkgList) {
-                         removePackage(pkgName);
-                         addPackage(pkgName);
+                         invalidatePackage(pkgName);
                      }
                  }
              }
@@ -375,11 +406,28 @@ public class ApplicationsState {
             if (mApplications == null) {
                 mApplications = new ArrayList<ApplicationInfo>();
             }
-            for (int i=0; i<mAppEntries.size(); i++) {
-                mAppEntries.get(i).sizeStale = true;
+
+            if (mInterestingConfigChanges.applyNewConfig(mContext.getResources())) {
+                // If an interesting part of the configuration has changed, we
+                // should completely reload the app entries.
+                mEntriesMap.clear();
+                mAppEntries.clear();
+            } else {
+                for (int i=0; i<mAppEntries.size(); i++) {
+                    mAppEntries.get(i).sizeStale = true;
+                }
             }
+
             for (int i=0; i<mApplications.size(); i++) {
                 final ApplicationInfo info = mApplications.get(i);
+                // Need to trim out any applications that are disabled by
+                // something different than the user.
+                if (!info.enabled && info.enabledSetting
+                        != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
+                    mApplications.remove(i);
+                    i--;
+                    continue;
+                }
                 final AppEntry entry = mEntriesMap.get(info.packageName);
                 if (entry != null) {
                     entry.info = info;
@@ -610,6 +658,11 @@ public class ApplicationsState {
         }
     }
 
+    void invalidatePackage(String pkgName) {
+        removePackage(pkgName);
+        addPackage(pkgName);
+    }
+    
     AppEntry getEntryLocked(ApplicationInfo info) {
         AppEntry entry = mEntriesMap.get(info.packageName);
         if (DEBUG) Log.i(TAG, "Looking up entry of pkg " + info.packageName + ": " + entry);
@@ -626,9 +679,17 @@ public class ApplicationsState {
 
     // --------------------------------------------------------------
 
-    private long getTotalSize(PackageStats ps) {
+    private long getTotalInternalSize(PackageStats ps) {
         if (ps != null) {
-            return ps.codeSize+ps.dataSize;
+            return ps.codeSize + ps.dataSize;
+        }
+        return SIZE_INVALID;
+    }
+
+    private long getTotalExternalSize(PackageStats ps) {
+        if (ps != null) {
+            return ps.externalCodeSize + ps.externalDataSize
+                    + ps.externalMediaSize + ps.externalObbSize;
         }
         return SIZE_INVALID;
     }
@@ -660,16 +721,29 @@ public class ApplicationsState {
                         synchronized (entry) {
                             entry.sizeStale = false;
                             entry.sizeLoadStart = 0;
-                            long newSize = getTotalSize(stats);
+                            long externalCodeSize = stats.externalCodeSize
+                                    + stats.externalObbSize;
+                            long externalDataSize = stats.externalDataSize
+                                    + stats.externalMediaSize + stats.externalCacheSize;
+                            long newSize = externalCodeSize + externalDataSize
+                                    + getTotalInternalSize(stats);
                             if (entry.size != newSize ||
                                     entry.cacheSize != stats.cacheSize ||
                                     entry.codeSize != stats.codeSize ||
-                                    entry.dataSize != stats.dataSize) {
+                                    entry.dataSize != stats.dataSize ||
+                                    entry.externalCodeSize != externalCodeSize ||
+                                    entry.externalDataSize != externalDataSize) {
                                 entry.size = newSize;
                                 entry.cacheSize = stats.cacheSize;
                                 entry.codeSize = stats.codeSize;
                                 entry.dataSize = stats.dataSize;
+                                entry.externalCodeSize = externalCodeSize;
+                                entry.externalDataSize = externalDataSize;
                                 entry.sizeStr = getSizeStr(entry.size);
+                                entry.internalSize = getTotalInternalSize(stats);
+                                entry.internalSizeStr = getSizeStr(entry.internalSize);
+                                entry.externalSize = getTotalExternalSize(stats);
+                                entry.externalSizeStr = getSizeStr(entry.externalSize);
                                 if (DEBUG) Log.i(TAG, "Set size of " + entry.label + " " + entry
                                         + ": " + entry.sizeStr);
                                 sizeChanged = true;

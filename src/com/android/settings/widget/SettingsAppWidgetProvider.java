@@ -26,11 +26,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SyncStorageEngine;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
 import android.location.LocationManager;
 import android.net.ConnectivityManager;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.AsyncTask;
+import android.os.Handler;
 import android.os.IPowerManager;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -38,6 +40,7 @@ import android.provider.Settings;
 import android.util.Log;
 import android.widget.RemoteViews;
 import com.android.settings.R;
+import com.android.settings.bluetooth.LocalBluetoothAdapter;
 import com.android.settings.bluetooth.LocalBluetoothManager;
 
 /**
@@ -50,7 +53,7 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
             new ComponentName("com.android.settings",
                     "com.android.settings.widget.SettingsAppWidgetProvider");
 
-    private static LocalBluetoothManager sLocalBluetoothManager = null;
+    private static LocalBluetoothAdapter sLocalBluetoothAdapter = null;
 
     private static final int BUTTON_WIFI = 0;
     private static final int BUTTON_BRIGHTNESS = 1;
@@ -74,21 +77,21 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
     private static final int POS_RIGHT = 2;
 
     private static final int[] IND_DRAWABLE_OFF = {
-        R.drawable.appwidget_settings_ind_off_l,
-        R.drawable.appwidget_settings_ind_off_c,
-        R.drawable.appwidget_settings_ind_off_r
+        R.drawable.appwidget_settings_ind_off_l_holo,
+        R.drawable.appwidget_settings_ind_off_c_holo,
+        R.drawable.appwidget_settings_ind_off_r_holo
     };
 
     private static final int[] IND_DRAWABLE_MID = {
-        R.drawable.appwidget_settings_ind_mid_l,
-        R.drawable.appwidget_settings_ind_mid_c,
-        R.drawable.appwidget_settings_ind_mid_r
+        R.drawable.appwidget_settings_ind_mid_l_holo,
+        R.drawable.appwidget_settings_ind_mid_c_holo,
+        R.drawable.appwidget_settings_ind_mid_r_holo
     };
 
     private static final int[] IND_DRAWABLE_ON = {
-        R.drawable.appwidget_settings_ind_on_l,
-        R.drawable.appwidget_settings_ind_on_c,
-        R.drawable.appwidget_settings_ind_on_r
+        R.drawable.appwidget_settings_ind_on_l_holo,
+        R.drawable.appwidget_settings_ind_on_c_holo,
+        R.drawable.appwidget_settings_ind_on_r_holo
     };
 
     /**
@@ -97,11 +100,16 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
     private static final int MINIMUM_BACKLIGHT = android.os.Power.BRIGHTNESS_DIM + 10;
     private static final int MAXIMUM_BACKLIGHT = android.os.Power.BRIGHTNESS_ON;
     private static final int DEFAULT_BACKLIGHT = (int) (android.os.Power.BRIGHTNESS_ON * 0.4f);
+    /** Minimum brightness at which the indicator is shown at half-full and ON */
+    private static final int HALF_BRIGHTNESS_THRESHOLD = (int) (0.3 * MAXIMUM_BACKLIGHT);
+    /** Minimum brightness at which the indicator is shown at full */
+    private static final int FULL_BRIGHTNESS_THRESHOLD = (int) (0.8 * MAXIMUM_BACKLIGHT);
 
     private static final StateTracker sWifiState = new WifiStateTracker();
     private static final StateTracker sBluetoothState = new BluetoothStateTracker();
     private static final StateTracker sGpsState = new GpsStateTracker();
     private static final StateTracker sSyncState = new SyncStateTracker();
+    private static SettingsObserver sSettingsObserver;
 
     /**
      * The state machine for a setting's toggling, tracking reality
@@ -322,8 +330,8 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
         public int getButtonId() { return R.id.img_wifi; }
         public int getIndicatorId() { return R.id.ind_wifi; }
         public int getButtonImageId(boolean on) {
-            return on ? R.drawable.ic_appwidget_settings_wifi_on
-                    : R.drawable.ic_appwidget_settings_wifi_off;
+            return on ? R.drawable.ic_appwidget_settings_wifi_on_holo
+                    : R.drawable.ic_appwidget_settings_wifi_off_holo;
         }
 
         @Override
@@ -405,24 +413,25 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
         public int getButtonId() { return R.id.img_bluetooth; }
         public int getIndicatorId() { return R.id.ind_bluetooth; }
         public int getButtonImageId(boolean on) {
-            return on ? R.drawable.ic_appwidget_settings_bluetooth_on
-                    : R.drawable.ic_appwidget_settings_bluetooth_off;
+            return on ? R.drawable.ic_appwidget_settings_bluetooth_on_holo
+                    : R.drawable.ic_appwidget_settings_bluetooth_off_holo;
         }
 
         @Override
         public int getActualState(Context context) {
-            if (sLocalBluetoothManager == null) {
-                sLocalBluetoothManager = LocalBluetoothManager.getInstance(context);
-                if (sLocalBluetoothManager == null) {
+            if (sLocalBluetoothAdapter == null) {
+                LocalBluetoothManager manager = LocalBluetoothManager.getInstance(context);
+                if (manager == null) {
                     return STATE_UNKNOWN;  // On emulator?
                 }
+                sLocalBluetoothAdapter = manager.getBluetoothAdapter();
             }
-            return bluetoothStateToFiveState(sLocalBluetoothManager.getBluetoothState());
+            return bluetoothStateToFiveState(sLocalBluetoothAdapter.getBluetoothState());
         }
 
         @Override
         protected void requestStateChange(Context context, final boolean desiredState) {
-            if (sLocalBluetoothManager == null) {
+            if (sLocalBluetoothAdapter == null) {
                 Log.d(TAG, "No LocalBluetoothManager");
                 return;
             }
@@ -433,7 +442,7 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
             new AsyncTask<Void, Void, Void>() {
                 @Override
                 protected Void doInBackground(Void... args) {
-                    sLocalBluetoothManager.setBluetoothEnabled(desiredState);
+                    sLocalBluetoothAdapter.setBluetoothEnabled(desiredState);
                     return null;
                 }
             }.execute();
@@ -475,8 +484,8 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
         public int getButtonId() { return R.id.img_gps; }
         public int getIndicatorId() { return R.id.ind_gps; }
         public int getButtonImageId(boolean on) {
-            return on ? R.drawable.ic_appwidget_settings_gps_on
-                    : R.drawable.ic_appwidget_settings_gps_off;
+            return on ? R.drawable.ic_appwidget_settings_gps_on_holo
+                    : R.drawable.ic_appwidget_settings_gps_off_holo;
         }
 
         @Override
@@ -525,14 +534,13 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
         public int getButtonId() { return R.id.img_sync; }
         public int getIndicatorId() { return R.id.ind_sync; }
         public int getButtonImageId(boolean on) {
-            return on ? R.drawable.ic_appwidget_settings_sync_on
-                    : R.drawable.ic_appwidget_settings_sync_off;
+            return on ? R.drawable.ic_appwidget_settings_sync_on_holo
+                    : R.drawable.ic_appwidget_settings_sync_off_holo;
         }
 
         @Override
         public int getActualState(Context context) {
-            boolean on = getBackgroundDataState(context) &&
-                    ContentResolver.getMasterSyncAutomatically();
+            boolean on = ContentResolver.getMasterSyncAutomatically();
             return on ? STATE_ENABLED : STATE_DISABLED;
         }
 
@@ -545,7 +553,6 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
         public void requestStateChange(final Context context, final boolean desiredState) {
             final ConnectivityManager connManager =
                     (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-            final boolean backgroundData = getBackgroundDataState(context);
             final boolean sync = ContentResolver.getMasterSyncAutomatically();
 
             new AsyncTask<Void, Void, Boolean>() {
@@ -553,9 +560,6 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
                 protected Boolean doInBackground(Void... args) {
                     // Turning sync on.
                     if (desiredState) {
-                        if (!backgroundData) {
-                            connManager.setBackgroundDataSetting(true);
-                        }
                         if (!sync) {
                             ContentResolver.setMasterSyncAutomatically(true);
                         }
@@ -580,11 +584,19 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
         }
     }
 
+    private static void checkObserver(Context context) {
+        if (sSettingsObserver == null) {
+            sSettingsObserver = new SettingsObserver(new Handler(),
+                    context.getApplicationContext());
+            sSettingsObserver.startObserving();
+        }
+    }
+
     @Override
     public void onUpdate(Context context, AppWidgetManager appWidgetManager,
             int[] appWidgetIds) {
         // Update each requested appWidgetId
-        RemoteViews view = buildUpdate(context, -1);
+        RemoteViews view = buildUpdate(context);
 
         for (int i = 0; i < appWidgetIds.length; i++) {
             appWidgetManager.updateAppWidget(appWidgetIds[i], view);
@@ -598,6 +610,7 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
                 new ComponentName("com.android.settings", ".widget.SettingsAppWidgetProvider"),
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP);
+        checkObserver(context);
     }
 
     @Override
@@ -608,27 +621,31 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
                 new ComponentName("com.android.settings", ".widget.SettingsAppWidgetProvider"),
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP);
+        if (sSettingsObserver != null) {
+            sSettingsObserver.stopObserving();
+            sSettingsObserver = null;
+        }
     }
 
     /**
      * Load image for given widget and build {@link RemoteViews} for it.
      */
-    static RemoteViews buildUpdate(Context context, int appWidgetId) {
+    static RemoteViews buildUpdate(Context context) {
         RemoteViews views = new RemoteViews(context.getPackageName(),
                 R.layout.widget);
-        views.setOnClickPendingIntent(R.id.btn_wifi, getLaunchPendingIntent(context, appWidgetId,
+        views.setOnClickPendingIntent(R.id.btn_wifi, getLaunchPendingIntent(context,
                 BUTTON_WIFI));
         views.setOnClickPendingIntent(R.id.btn_brightness,
                 getLaunchPendingIntent(context,
-                        appWidgetId, BUTTON_BRIGHTNESS));
+                        BUTTON_BRIGHTNESS));
         views.setOnClickPendingIntent(R.id.btn_sync,
                 getLaunchPendingIntent(context,
-                        appWidgetId, BUTTON_SYNC));
+                        BUTTON_SYNC));
         views.setOnClickPendingIntent(R.id.btn_gps,
-                getLaunchPendingIntent(context, appWidgetId, BUTTON_GPS));
+                getLaunchPendingIntent(context, BUTTON_GPS));
         views.setOnClickPendingIntent(R.id.btn_bluetooth,
                 getLaunchPendingIntent(context,
-                        appWidgetId, BUTTON_BLUETOOTH));
+                        BUTTON_BLUETOOTH));
 
         updateButtons(views, context);
         return views;
@@ -640,10 +657,11 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
      * @param context
      */
     public static void updateWidget(Context context) {
-        RemoteViews views = buildUpdate(context, -1);
+        RemoteViews views = buildUpdate(context);
         // Update specific list of appWidgetIds if given, otherwise default to all
         final AppWidgetManager gm = AppWidgetManager.getInstance(context);
         gm.updateAppWidget(THIS_APPWIDGET, views);
+        checkObserver(context);
     }
 
     /**
@@ -660,19 +678,30 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
 
         if (getBrightnessMode(context)) {
             views.setImageViewResource(R.id.img_brightness,
-                                       R.drawable.ic_appwidget_settings_brightness_auto);
+                    R.drawable.ic_appwidget_settings_brightness_auto_holo);
             views.setImageViewResource(R.id.ind_brightness,
-                                       R.drawable.appwidget_settings_ind_on_r);
-        } else if (getBrightness(context)) {
-            views.setImageViewResource(R.id.img_brightness,
-                                       R.drawable.ic_appwidget_settings_brightness_on);
-            views.setImageViewResource(R.id.ind_brightness,
-                                       R.drawable.appwidget_settings_ind_on_r);
+                    R.drawable.appwidget_settings_ind_on_r_holo);
         } else {
-            views.setImageViewResource(R.id.img_brightness,
-                                       R.drawable.ic_appwidget_settings_brightness_off);
-            views.setImageViewResource(R.id.ind_brightness,
-                                       R.drawable.appwidget_settings_ind_off_r);
+            final int brightness = getBrightness(context);
+            // Set the icon
+            if (brightness > FULL_BRIGHTNESS_THRESHOLD) {
+                views.setImageViewResource(R.id.img_brightness,
+                        R.drawable.ic_appwidget_settings_brightness_full_holo);
+            } else if (brightness > HALF_BRIGHTNESS_THRESHOLD) {
+                views.setImageViewResource(R.id.img_brightness,
+                        R.drawable.ic_appwidget_settings_brightness_half_holo);
+            } else {
+                views.setImageViewResource(R.id.img_brightness,
+                        R.drawable.ic_appwidget_settings_brightness_off_holo);
+            }
+            // Set the ON state
+            if (brightness > HALF_BRIGHTNESS_THRESHOLD) {
+                views.setImageViewResource(R.id.ind_brightness,
+                        R.drawable.appwidget_settings_ind_on_r_holo);
+            } else {
+                views.setImageViewResource(R.id.ind_brightness,
+                        R.drawable.appwidget_settings_ind_off_r_holo);
+            }
         }
     }
 
@@ -680,10 +709,9 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
      * Creates PendingIntent to notify the widget of a button click.
      *
      * @param context
-     * @param appWidgetId
      * @return
      */
-    private static PendingIntent getLaunchPendingIntent(Context context, int appWidgetId,
+    private static PendingIntent getLaunchPendingIntent(Context context,
             int buttonId) {
         Intent launchIntent = new Intent();
         launchIntent.setClass(context, SettingsAppWidgetProvider.class);
@@ -739,36 +767,23 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
     }
 
     /**
-     * Gets the state of background data.
+     * Gets brightness level.
      *
      * @param context
-     * @return true if enabled
+     * @return brightness level between 0 and 255.
      */
-    private static boolean getBackgroundDataState(Context context) {
-        ConnectivityManager connManager =
-                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        return connManager.getBackgroundDataSetting();
-    }
-
-    /**
-     * Gets state of brightness.
-     *
-     * @param context
-     * @return true if more than moderately bright.
-     */
-    private static boolean getBrightness(Context context) {
+    private static int getBrightness(Context context) {
         try {
             IPowerManager power = IPowerManager.Stub.asInterface(
                     ServiceManager.getService("power"));
             if (power != null) {
                 int brightness = Settings.System.getInt(context.getContentResolver(),
                         Settings.System.SCREEN_BRIGHTNESS);
-                return brightness > 100;
+                return brightness;
             }
         } catch (Exception e) {
-            Log.d(TAG, "getBrightness: " + e);
         }
-        return false;
+        return 0;
     }
 
     /**
@@ -848,4 +863,34 @@ public class SettingsAppWidgetProvider extends AppWidgetProvider {
             Log.d(TAG, "toggleBrightness: " + e);
         }
     }
+
+    /** Observer to watch for changes to the BRIGHTNESS setting */
+    private static class SettingsObserver extends ContentObserver {
+
+        private Context mContext;
+
+        SettingsObserver(Handler handler, Context context) {
+            super(handler);
+            mContext = context;
+        }
+
+        void startObserving() {
+            ContentResolver resolver = mContext.getContentResolver();
+            // Listen to brightness and brightness mode
+            resolver.registerContentObserver(Settings.System
+                    .getUriFor(Settings.System.SCREEN_BRIGHTNESS), false, this);
+            resolver.registerContentObserver(Settings.System
+                    .getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE), false, this);
+        }
+
+        void stopObserving() {
+            mContext.getContentResolver().unregisterContentObserver(this);
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            updateWidget(mContext);
+        }
+    }
+
 }

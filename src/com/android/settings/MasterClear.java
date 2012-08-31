@@ -16,16 +16,29 @@
 
 package com.android.settings;
 
-import com.android.internal.os.storage.ExternalStorageFormatter;
-import com.android.internal.widget.LockPatternUtils;
-
+import android.accounts.Account;
+import android.accounts.AccountManager;
+import android.accounts.AuthenticatorDescription;
 import android.app.Activity;
+import android.app.Fragment;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.res.Resources;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
+import android.os.Environment;
+import android.os.SystemProperties;
+import android.preference.Preference;
+import android.preference.PreferenceActivity;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 /**
  * Confirm and execute a reset of the device to a clean "just out of the box"
@@ -34,43 +47,20 @@ import android.widget.CheckBox;
  * has defined one, followed by a final strongly-worded "THIS WILL ERASE EVERYTHING
  * ON THE PHONE" prompt.  If at any time the phone is allowed to go to sleep, is
  * locked, et cetera, then the confirmation sequence is abandoned.
+ *
+ * This is the initial screen.
  */
-public class MasterClear extends Activity {
+public class MasterClear extends Fragment {
+    private static final String TAG = "MasterClear";
 
     private static final int KEYGUARD_REQUEST = 55;
 
-    private LayoutInflater mInflater;
-    private LockPatternUtils mLockUtils;
+    static final String ERASE_EXTERNAL_EXTRA = "erase_sd";
 
-    private View mInitialView;
+    private View mContentView;
     private Button mInitiateButton;
     private View mExternalStorageContainer;
     private CheckBox mExternalStorage;
-
-    private View mFinalView;
-    private Button mFinalButton;
-
-    /**
-     * The user has gone through the multiple confirmation, so now we go ahead
-     * and invoke the Checkin Service to reset the device to its factory-default
-     * state (rebooting in the process).
-     */
-    private Button.OnClickListener mFinalClickListener = new Button.OnClickListener() {
-            public void onClick(View v) {
-                if (Utils.isMonkeyRunning()) {
-                    return;
-                }
-
-                if (mExternalStorage.isChecked()) {
-                    Intent intent = new Intent(ExternalStorageFormatter.FORMAT_AND_FACTORY_RESET);
-                    intent.setComponent(ExternalStorageFormatter.COMPONENT_NAME);
-                    startService(intent);
-                } else {
-                    sendBroadcast(new Intent("android.intent.action.MASTER_CLEAR"));
-                    // Intent handling is asynchronous -- assume it will happen soon.
-                }
-            }
-        };
 
     /**
      * Keyguard validation is run using the standard {@link ConfirmLockPattern}
@@ -79,14 +69,15 @@ public class MasterClear extends Activity {
      * @return true if confirmation launched
      */
     private boolean runKeyguardConfirmation(int request) {
-        return new ChooseLockSettingsHelper(this)
+        Resources res = getActivity().getResources();
+        return new ChooseLockSettingsHelper(getActivity(), this)
                 .launchConfirmationActivity(request,
-                        getText(R.string.master_clear_gesture_prompt),
-                        getText(R.string.master_clear_gesture_explanation));
+                        res.getText(R.string.master_clear_gesture_prompt),
+                        res.getText(R.string.master_clear_gesture_explanation));
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
         if (requestCode != KEYGUARD_REQUEST) {
@@ -96,12 +87,18 @@ public class MasterClear extends Activity {
         // If the user entered a valid keyguard trace, present the final
         // confirmation prompt; otherwise, go back to the initial state.
         if (resultCode == Activity.RESULT_OK) {
-            establishFinalConfirmationState();
-        } else if (resultCode == Activity.RESULT_CANCELED) {
-            finish();
+            showFinalConfirmation();
         } else {
             establishInitialState();
         }
+    }
+
+    private void showFinalConfirmation() {
+        Preference preference = new Preference(getActivity());
+        preference.setFragment(MasterClearConfirm.class.getName());
+        preference.setTitle(R.string.master_clear_confirm_title);
+        preference.getExtras().putBoolean(ERASE_EXTERNAL_EXTRA, mExternalStorage.isChecked());
+        ((PreferenceActivity) getActivity()).onPreferenceStartFragment(null, preference);
     }
 
     /**
@@ -109,27 +106,14 @@ public class MasterClear extends Activity {
      * keyguard confirmation if the user has currently enabled one.  If there
      * is no keyguard available, we simply go to the final confirmation prompt.
      */
-    private Button.OnClickListener mInitiateListener = new Button.OnClickListener() {
-            public void onClick(View v) {
-                if (!runKeyguardConfirmation(KEYGUARD_REQUEST)) {
-                    establishFinalConfirmationState();
-                }
+    private final Button.OnClickListener mInitiateListener = new Button.OnClickListener() {
+
+        public void onClick(View v) {
+            if (!runKeyguardConfirmation(KEYGUARD_REQUEST)) {
+                showFinalConfirmation();
             }
-        };
-
-    /**
-     * Configure the UI for the final confirmation interaction
-     */
-    private void establishFinalConfirmationState() {
-        if (mFinalView == null) {
-            mFinalView = mInflater.inflate(R.layout.master_clear_final, null);
-            mFinalButton =
-                    (Button) mFinalView.findViewById(R.id.execute_master_clear);
-            mFinalButton.setOnClickListener(mFinalClickListener);
         }
-
-        setContentView(mFinalView);
-    }
+    };
 
     /**
      * In its initial state, the activity presents a button for the user to
@@ -144,16 +128,35 @@ public class MasterClear extends Activity {
      * to change contents.
      */
     private void establishInitialState() {
-        if (mInitialView == null) {
-            mInitialView = mInflater.inflate(R.layout.master_clear_primary, null);
-            mInitiateButton =
-                    (Button) mInitialView.findViewById(R.id.initiate_master_clear);
-            mInitiateButton.setOnClickListener(mInitiateListener);
-            mExternalStorageContainer =
-                mInitialView.findViewById(R.id.erase_external_container);
-            mExternalStorage =
-                    (CheckBox) mInitialView.findViewById(R.id.erase_external);
+        mInitiateButton = (Button) mContentView.findViewById(R.id.initiate_master_clear);
+        mInitiateButton.setOnClickListener(mInitiateListener);
+        mExternalStorageContainer = mContentView.findViewById(R.id.erase_external_container);
+        mExternalStorage = (CheckBox) mContentView.findViewById(R.id.erase_external);
+
+        /*
+         * If the external storage is emulated, it will be erased with a factory
+         * reset at any rate. There is no need to have a separate option until
+         * we have a factory reset that only erases some directories and not
+         * others. Likewise, if it's non-removable storage, it could potentially have been
+         * encrypted, and will also need to be wiped.
+         */
+        boolean isExtStorageEmulated = Environment.isExternalStorageEmulated();
+        if (isExtStorageEmulated
+                || (!Environment.isExternalStorageRemovable() && isExtStorageEncrypted())) {
+            mExternalStorageContainer.setVisibility(View.GONE);
+
+            final View externalOption = mContentView.findViewById(R.id.erase_external_option_text);
+            externalOption.setVisibility(View.GONE);
+
+            final View externalAlsoErased = mContentView.findViewById(R.id.also_erases_external);
+            externalAlsoErased.setVisibility(View.VISIBLE);
+
+            // If it's not emulated, it is on a separate partition but it means we're doing
+            // a force wipe due to encryption.
+            mExternalStorage.setChecked(!isExtStorageEmulated);
+        } else {
             mExternalStorageContainer.setOnClickListener(new View.OnClickListener() {
+
                 @Override
                 public void onClick(View v) {
                     mExternalStorage.toggle();
@@ -161,31 +164,79 @@ public class MasterClear extends Activity {
             });
         }
 
-        setContentView(mInitialView);
+        loadAccountList();
+    }
+
+    private boolean isExtStorageEncrypted() {
+        String state = SystemProperties.get("vold.decrypt");
+        return !"".equals(state);
+    }
+
+    private void loadAccountList() {
+        View accountsLabel = mContentView.findViewById(R.id.accounts_label);
+        LinearLayout contents = (LinearLayout)mContentView.findViewById(R.id.accounts);
+        contents.removeAllViews();
+
+        Context context = getActivity();
+
+        AccountManager mgr = AccountManager.get(context);
+        Account[] accounts = mgr.getAccounts();
+        final int N = accounts.length;
+        if (N == 0) {
+            accountsLabel.setVisibility(View.GONE);
+            contents.setVisibility(View.GONE);
+            return;
+        }
+
+        LayoutInflater inflater = (LayoutInflater)context.getSystemService(
+                Context.LAYOUT_INFLATER_SERVICE);
+
+        AuthenticatorDescription[] descs = AccountManager.get(context).getAuthenticatorTypes();
+        final int M = descs.length;
+
+        for (int i=0; i<N; i++) {
+            Account account = accounts[i];
+            AuthenticatorDescription desc = null;
+            for (int j=0; j<M; j++) {
+                if (account.type.equals(descs[j].type)) {
+                    desc = descs[j];
+                    break;
+                }
+            }
+            if (desc == null) {
+                Log.w(TAG, "No descriptor for account name=" + account.name
+                        + " type=" + account.type);
+                continue;
+            }
+            Drawable icon = null;
+            try {
+                if (desc.iconId != 0) {
+                    Context authContext = context.createPackageContext(desc.packageName, 0);
+                    icon = authContext.getResources().getDrawable(desc.iconId);
+                }
+            } catch (PackageManager.NameNotFoundException e) {
+                Log.w(TAG, "No icon for account type " + desc.type);
+            }
+
+            TextView child = (TextView)inflater.inflate(R.layout.master_clear_account,
+                    contents, false);
+            child.setText(account.name);
+            if (icon != null) {
+                child.setCompoundDrawablesWithIntrinsicBounds(icon, null, null, null);
+            }
+            contents.addView(child);
+        }
+
+        accountsLabel.setVisibility(View.VISIBLE);
+        contents.setVisibility(View.VISIBLE);
     }
 
     @Override
-    protected void onCreate(Bundle savedState) {
-        super.onCreate(savedState);
-
-        mInitialView = null;
-        mFinalView = null;
-        mInflater = LayoutInflater.from(this);
-        mLockUtils = new LockPatternUtils(this);
+    public View onCreateView(LayoutInflater inflater, ViewGroup container,
+            Bundle savedInstanceState) {
+        mContentView = inflater.inflate(R.layout.master_clear, null);
 
         establishInitialState();
-    }
-
-    /** Abandon all progress through the confirmation sequence by returning
-     * to the initial view any time the activity is interrupted (e.g. by
-     * idle timeout).
-     */
-    @Override
-    public void onPause() {
-        super.onPause();
-
-        if (!isFinishing()) {
-            establishInitialState();
-        }
+        return mContentView;
     }
 }

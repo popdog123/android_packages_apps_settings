@@ -16,7 +16,6 @@
 
 package com.android.settings.applications;
 
-import com.android.internal.content.PackageHelper;
 import com.android.settings.R;
 import com.android.settings.applications.ApplicationsState.AppEntry;
 
@@ -24,6 +23,9 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.app.Dialog;
+import android.app.DialogFragment;
+import android.app.Fragment;
+import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -31,7 +33,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageDataObserver;
-import android.content.pm.IPackageManager;
 import android.content.pm.IPackageMoveObserver;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -41,11 +42,13 @@ import android.hardware.usb.IUsbManager;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.preference.PreferenceActivity;
 import android.text.format.Formatter;
 import android.util.Log;
 
@@ -53,9 +56,13 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 import android.content.ComponentName;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.AppSecurityPermissions;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -69,27 +76,37 @@ import android.widget.TextView;
  * For non-system applications, there is no option to clear data. Instead there is an option to
  * uninstall the application.
  */
-public class InstalledAppDetails extends Activity
-        implements View.OnClickListener, ApplicationsState.Callbacks {
+public class InstalledAppDetails extends Fragment
+        implements View.OnClickListener, CompoundButton.OnCheckedChangeListener,
+        ApplicationsState.Callbacks {
     private static final String TAG="InstalledAppDetails";
-    static final boolean SUPPORT_DISABLE_APPS = false;
+    static final boolean SUPPORT_DISABLE_APPS = true;
     private static final boolean localLOGV = false;
     
+    public static final String ARG_PACKAGE_NAME = "package";
+
     private PackageManager mPm;
     private IUsbManager mUsbManager;
+    private DevicePolicyManager mDpm;
     private ApplicationsState mState;
     private ApplicationsState.AppEntry mAppEntry;
     private PackageInfo mPackageInfo;
     private CanBeOnSdCardChecker mCanBeOnSdCardChecker;
+    private View mRootView;
     private Button mUninstallButton;
     private boolean mMoveInProgress = false;
     private boolean mUpdatedSysApp = false;
     private Button mActivitiesButton;
+    private View mScreenCompatSection;
+    private CheckBox mAskCompatibilityCB;
+    private CheckBox mEnableCompatibilityCB;
     private boolean mCanClearData = true;
     private TextView mAppVersion;
     private TextView mTotalSize;
     private TextView mAppSize;
     private TextView mDataSize;
+    private TextView mExternalCodeSize;
+    private TextView mExternalDataSize;
     private ClearUserDataObserver mClearDataObserver;
     // Views related to cache info
     private TextView mCacheSize;
@@ -98,13 +115,14 @@ public class InstalledAppDetails extends Activity
     private Button mForceStopButton;
     private Button mClearDataButton;
     private Button mMoveAppButton;
-    private int mMoveErrorCode;
     
     private PackageMoveObserver mPackageMoveObserver;
     
     private boolean mHaveSizes = false;
     private long mLastCodeSize = -1;
     private long mLastDataSize = -1;
+    private long mLastExternalCodeSize = -1;
+    private long mLastExternalDataSize = -1;
     private long mLastCacheSize = -1;
     private long mLastTotalSize = -1;
     
@@ -131,11 +149,12 @@ public class InstalledAppDetails extends Activity
     private static final int DLG_CANNOT_CLEAR_DATA = DLG_BASE + 4;
     private static final int DLG_FORCE_STOP = DLG_BASE + 5;
     private static final int DLG_MOVE_FAILED = DLG_BASE + 6;
+    private static final int DLG_DISABLE = DLG_BASE + 7;
     
     private Handler mHandler = new Handler() {
         public void handleMessage(Message msg) {
-            // If the activity is gone, don't process any more messages.
-            if (isFinishing()) {
+            // If the fragment is gone, don't process any more messages.
+            if (getView() == null) {
                 return;
             }
             switch (msg.what) {
@@ -183,13 +202,14 @@ public class InstalledAppDetails extends Activity
         if (size == SIZE_INVALID) {
             return mInvalidSizeStr.toString();
         }
-        return Formatter.formatFileSize(this, size);
+        return Formatter.formatFileSize(getActivity(), size);
     }
     
     private void initDataButtons() {
         if ((mAppEntry.info.flags&(ApplicationInfo.FLAG_SYSTEM
                 | ApplicationInfo.FLAG_ALLOW_CLEAR_USER_DATA))
-                == ApplicationInfo.FLAG_SYSTEM) {
+                == ApplicationInfo.FLAG_SYSTEM
+                || mDpm.packageHasActiveAdmins(mPackageInfo.packageName)) {
             mClearDataButton.setText(R.string.clear_user_data_text);
             mClearDataButton.setEnabled(false);
             mCanClearData = false;
@@ -206,15 +226,15 @@ public class InstalledAppDetails extends Activity
     private CharSequence getMoveErrMsg(int errCode) {
         switch (errCode) {
             case PackageManager.MOVE_FAILED_INSUFFICIENT_STORAGE:
-                return getString(R.string.insufficient_storage);
+                return getActivity().getString(R.string.insufficient_storage);
             case PackageManager.MOVE_FAILED_DOESNT_EXIST:
-                return getString(R.string.does_not_exist);
+                return getActivity().getString(R.string.does_not_exist);
             case PackageManager.MOVE_FAILED_FORWARD_LOCKED:
-                return getString(R.string.app_forward_locked);
+                return getActivity().getString(R.string.app_forward_locked);
             case PackageManager.MOVE_FAILED_INVALID_LOCATION:
-                return getString(R.string.invalid_location);
+                return getActivity().getString(R.string.invalid_location);
             case PackageManager.MOVE_FAILED_SYSTEM_PACKAGE:
-                return getString(R.string.system_package);
+                return getActivity().getString(R.string.system_package);
             case PackageManager.MOVE_FAILED_INTERNAL_ERROR:
                 return "";
         }
@@ -222,6 +242,10 @@ public class InstalledAppDetails extends Activity
     }
 
     private void initMoveButton() {
+        if (Environment.isExternalStorageEmulated()) {
+            mMoveAppButton.setVisibility(View.INVISIBLE);
+            return;
+        }
         boolean dataOnly = false;
         dataOnly = (mPackageInfo == null) && (mAppEntry != null);
         boolean moveDisable = true;
@@ -236,8 +260,12 @@ public class InstalledAppDetails extends Activity
             mCanBeOnSdCardChecker.init();
             moveDisable = !mCanBeOnSdCardChecker.check(mAppEntry.info);
         }
-        mMoveAppButton.setOnClickListener(this);
-        mMoveAppButton.setEnabled(true);
+        if (moveDisable) {
+            mMoveAppButton.setEnabled(false);
+        } else {
+            mMoveAppButton.setOnClickListener(this);
+            mMoveAppButton.setEnabled(true);
+        }
     }
 
     private void initUninstallButtons() {
@@ -260,7 +288,7 @@ public class InstalledAppDetails extends Activity
                         intent.setPackage(mAppEntry.info.packageName);
                         List<ResolveInfo> homes = mPm.queryIntentActivities(intent, 0);
                         if ((homes != null && homes.size() > 0) ||
-                                (mPackageInfo != null &&
+                                (mPackageInfo != null && mPackageInfo.signatures != null &&
                                         sys.signatures[0].equals(mPackageInfo.signatures[0]))) {
                             // Disable button for core system applications.
                             mUninstallButton.setText(R.string.disable_text);
@@ -279,6 +307,11 @@ public class InstalledAppDetails extends Activity
                 mUninstallButton.setText(R.string.uninstall_text);
             }
         }
+        // If this is a device admin, it can't be uninstall or disabled.
+        // We do this here so the text of the button is still set correctly.
+        if (mDpm.packageHasActiveAdmins(mPackageInfo.packageName)) {
+            enabled = false;
+        }
         mUninstallButton.setEnabled(enabled);
         if (enabled) {
             // Register listener
@@ -288,47 +321,60 @@ public class InstalledAppDetails extends Activity
 
     /** Called when the activity is first created. */
     @Override
-    protected void onCreate(Bundle icicle) {
+    public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
         
-        mState = ApplicationsState.getInstance(getApplication());
-        mPm = getPackageManager();
+        mState = ApplicationsState.getInstance(getActivity().getApplication());
+        mPm = getActivity().getPackageManager();
         IBinder b = ServiceManager.getService(Context.USB_SERVICE);
         mUsbManager = IUsbManager.Stub.asInterface(b);
+        mDpm = (DevicePolicyManager)getActivity().getSystemService(Context.DEVICE_POLICY_SERVICE);
 
         mCanBeOnSdCardChecker = new CanBeOnSdCardChecker();
+    }
+
+    @Override
+    public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+        View view = mRootView = inflater.inflate(R.layout.installed_app_details, null);
         
-        setContentView(R.layout.installed_app_details);
-        
-        mComputingStr = getText(R.string.computing_size);
+        mComputingStr = getActivity().getText(R.string.computing_size);
         
         // Set default values on sizes
-        mTotalSize = (TextView)findViewById(R.id.total_size_text);
-        mAppSize = (TextView)findViewById(R.id.application_size_text);
-        mDataSize = (TextView)findViewById(R.id.data_size_text);
+        mTotalSize = (TextView)view.findViewById(R.id.total_size_text);
+        mAppSize = (TextView)view.findViewById(R.id.application_size_text);
+        mDataSize = (TextView)view.findViewById(R.id.data_size_text);
+        mExternalCodeSize = (TextView)view.findViewById(R.id.external_code_size_text);
+        mExternalDataSize = (TextView)view.findViewById(R.id.external_data_size_text);
         
         // Get Control button panel
-        View btnPanel = findViewById(R.id.control_buttons_panel);
+        View btnPanel = view.findViewById(R.id.control_buttons_panel);
         mForceStopButton = (Button) btnPanel.findViewById(R.id.left_button);
         mForceStopButton.setText(R.string.force_stop);
         mUninstallButton = (Button)btnPanel.findViewById(R.id.right_button);
         mForceStopButton.setEnabled(false);
         
         // Initialize clear data and move install location buttons
-        View data_buttons_panel = findViewById(R.id.data_buttons_panel);
+        View data_buttons_panel = view.findViewById(R.id.data_buttons_panel);
         mClearDataButton = (Button) data_buttons_panel.findViewById(R.id.left_button);
         mMoveAppButton = (Button) data_buttons_panel.findViewById(R.id.right_button);
         
         // Cache section
-        mCacheSize = (TextView) findViewById(R.id.cache_size_text);
-        mClearCacheButton = (Button) findViewById(R.id.clear_cache_button);
+        mCacheSize = (TextView) view.findViewById(R.id.cache_size_text);
+        mClearCacheButton = (Button) view.findViewById(R.id.clear_cache_button);
+
+        mActivitiesButton = (Button)view.findViewById(R.id.clear_activities_button);
         
-        mActivitiesButton = (Button)findViewById(R.id.clear_activities_button);
+        // Screen compatibility control
+        mScreenCompatSection = view.findViewById(R.id.screen_compatibility_section);
+        mAskCompatibilityCB = (CheckBox)view.findViewById(R.id.ask_compatibility_cb);
+        mEnableCompatibilityCB = (CheckBox)view.findViewById(R.id.enable_compatibility_cb);
+
+        return view;
     }
 
     // Utility method to set applicaiton label and icon.
     private void setAppLabelAndIcon(PackageInfo pkgInfo) {
-        View appSnippet = findViewById(R.id.app_snippet);
+        View appSnippet = mRootView.findViewById(R.id.app_snippet);
         ImageView icon = (ImageView) appSnippet.findViewById(R.id.app_icon);
         mState.ensureIcon(mAppEntry);
         icon.setImageDrawable(mAppEntry.icon);
@@ -340,7 +386,7 @@ public class InstalledAppDetails extends Activity
 
         if (pkgInfo != null && pkgInfo.versionName != null) {
             mAppVersion.setVisibility(View.VISIBLE);
-            mAppVersion.setText(getString(R.string.version_text,
+            mAppVersion.setText(getActivity().getString(R.string.version_text,
                     String.valueOf(pkgInfo.versionName)));
         } else {
             mAppVersion.setVisibility(View.INVISIBLE);
@@ -395,9 +441,15 @@ public class InstalledAppDetails extends Activity
         if (mMoveInProgress) {
             return true;
         }
-        
-        Intent intent = getIntent();
-        final String packageName = intent.getData().getSchemeSpecificPart();
+        final Bundle args = getArguments();
+        String packageName = (args != null) ? args.getString(ARG_PACKAGE_NAME) : null;
+        if (packageName == null) {
+            Intent intent = (args == null) ?
+                    getActivity().getIntent() : (Intent) args.getParcelable("intent");
+            if (intent != null) {
+                packageName = intent.getData().getSchemeSpecificPart();
+            }
+        }
         mAppEntry = mState.getEntry(packageName);
         
         if (mAppEntry == null) {
@@ -428,7 +480,7 @@ public class InstalledAppDetails extends Activity
         } catch (RemoteException e) {
             Log.e(TAG, "mUsbManager.hasDefaults", e);
         }
-        TextView autoLaunchView = (TextView)findViewById(R.id.auto_launch);
+        TextView autoLaunchView = (TextView)mRootView.findViewById(R.id.auto_launch);
         if (prefActList.size() <= 0 && !hasUsbDefaults) {
             // Disable clear activities button
             autoLaunchView.setText(R.string.auto_launch_disable_text);
@@ -439,9 +491,26 @@ public class InstalledAppDetails extends Activity
             mActivitiesButton.setOnClickListener(this);
         }
 
+        // Screen compatibility section.
+        ActivityManager am = (ActivityManager)
+                getActivity().getSystemService(Context.ACTIVITY_SERVICE);
+        int compatMode = am.getPackageScreenCompatMode(packageName);
+        // For now these are always off; this is the old UI model which we
+        // are no longer using.
+        if (false && (compatMode == ActivityManager.COMPAT_MODE_DISABLED
+                || compatMode == ActivityManager.COMPAT_MODE_ENABLED)) {
+            mScreenCompatSection.setVisibility(View.VISIBLE);
+            mAskCompatibilityCB.setChecked(am.getPackageAskScreenCompat(packageName));
+            mAskCompatibilityCB.setOnCheckedChangeListener(this);
+            mEnableCompatibilityCB.setChecked(compatMode == ActivityManager.COMPAT_MODE_ENABLED);
+            mEnableCompatibilityCB.setOnCheckedChangeListener(this);
+        } else {
+            mScreenCompatSection.setVisibility(View.GONE);
+        }
+
         // Security permissions section
-        LinearLayout permsView = (LinearLayout) findViewById(R.id.permissions_section);
-        AppSecurityPermissions asp = new AppSecurityPermissions(this, packageName);
+        LinearLayout permsView = (LinearLayout) mRootView.findViewById(R.id.permissions_section);
+        AppSecurityPermissions asp = new AppSecurityPermissions(getActivity(), packageName);
         if (asp.getPermissionCount() > 0) {
             permsView.setVisibility(View.VISIBLE);
             // Make the security sections header visible
@@ -464,10 +533,8 @@ public class InstalledAppDetails extends Activity
         if(localLOGV) Log.i(TAG, "appChanged="+appChanged);
         Intent intent = new Intent();
         intent.putExtra(ManageApplications.APP_CHG, appChanged);
-        setResult(ManageApplications.RESULT_OK, intent);
-        if(finish) {
-            finish();
-        }
+        PreferenceActivity pa = (PreferenceActivity)getActivity();
+        pa.finishPreferencePanel(this, Activity.RESULT_OK, intent);
     }
     
     private void refreshSizeInfo() {
@@ -492,6 +559,14 @@ public class InstalledAppDetails extends Activity
             if (mLastDataSize != mAppEntry.dataSize) {
                 mLastDataSize = mAppEntry.dataSize;
                 mDataSize.setText(getSizeStr(mAppEntry.dataSize));
+            }
+            if (mLastExternalCodeSize != mAppEntry.externalCodeSize) {
+                mLastExternalCodeSize = mAppEntry.externalCodeSize;
+                mExternalCodeSize.setText(getSizeStr(mAppEntry.externalCodeSize));
+            }
+            if (mLastExternalDataSize != mAppEntry.externalDataSize) {
+                mLastExternalDataSize = mAppEntry.externalDataSize;
+                mExternalDataSize.setText(getSizeStr(mAppEntry.externalDataSize));
             }
             if (mLastCacheSize != mAppEntry.cacheSize) {
                 mLastCacheSize = mAppEntry.cacheSize;
@@ -556,8 +631,7 @@ public class InstalledAppDetails extends Activity
             // Refresh size information again.
             mState.requestSize(mAppEntry.info.packageName);
         } else {
-            mMoveErrorCode = result;
-            showDialogInner(DLG_MOVE_FAILED);
+            showDialogInner(DLG_MOVE_FAILED, result);
         }
         refreshUi();
     }
@@ -574,105 +648,141 @@ public class InstalledAppDetails extends Activity
         if (mClearDataObserver == null) {
             mClearDataObserver = new ClearUserDataObserver();
         }
-        ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        ActivityManager am = (ActivityManager)
+                getActivity().getSystemService(Context.ACTIVITY_SERVICE);
         boolean res = am.clearApplicationUserData(packageName, mClearDataObserver);
         if (!res) {
             // Clearing data failed for some obscure reason. Just log error for now
             Log.i(TAG, "Couldnt clear application user data for package:"+packageName);
-            showDialogInner(DLG_CANNOT_CLEAR_DATA);
+            showDialogInner(DLG_CANNOT_CLEAR_DATA, 0);
         } else {
             mClearDataButton.setText(R.string.recompute_size);
         }
     }
     
-    private void showDialogInner(int id) {
-        //removeDialog(id);
-        showDialog(id);
+    private void showDialogInner(int id, int moveErrorCode) {
+        DialogFragment newFragment = MyAlertDialogFragment.newInstance(id, moveErrorCode);
+        newFragment.setTargetFragment(this, 0);
+        newFragment.show(getFragmentManager(), "dialog " + id);
     }
     
-    @Override
-    public Dialog onCreateDialog(int id, Bundle args) {
-        switch (id) {
-        case DLG_CLEAR_DATA:
-            return new AlertDialog.Builder(this)
-            .setTitle(getString(R.string.clear_data_dlg_title))
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(getString(R.string.clear_data_dlg_text))
-            .setPositiveButton(R.string.dlg_ok,
-                    new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface dialog, int which) {
-                    // Clear user data here
-                    initiateClearUserData();
-                }
-            })
-            .setNegativeButton(R.string.dlg_cancel, null)
-            .create();
-        case DLG_FACTORY_RESET:
-            return new AlertDialog.Builder(this)
-            .setTitle(getString(R.string.app_factory_reset_dlg_title))
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(getString(R.string.app_factory_reset_dlg_text))
-            .setPositiveButton(R.string.dlg_ok,
-                    new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface dialog, int which) {
-                    // Clear user data here
-                    uninstallPkg(mAppEntry.info.packageName);
-                }
-            })
-            .setNegativeButton(R.string.dlg_cancel, null)
-            .create();
-        case DLG_APP_NOT_FOUND:
-            return new AlertDialog.Builder(this)
-            .setTitle(getString(R.string.app_not_found_dlg_title))
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(getString(R.string.app_not_found_dlg_title))
-            .setNeutralButton(getString(R.string.dlg_ok),
-                    new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface dialog, int which) {
-                    //force to recompute changed value
-                    setIntentAndFinish(true, true);
-                }
-            })
-            .create();
-        case DLG_CANNOT_CLEAR_DATA:
-            return new AlertDialog.Builder(this)
-            .setTitle(getString(R.string.clear_failed_dlg_title))
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(getString(R.string.clear_failed_dlg_text))
-            .setNeutralButton(R.string.dlg_ok,
-                    new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface dialog, int which) {
-                    mClearDataButton.setEnabled(false);
-                    //force to recompute changed value
-                    setIntentAndFinish(false, false);
-                }
-            })
-            .create();
-        case DLG_FORCE_STOP:
-            return new AlertDialog.Builder(this)
-            .setTitle(getString(R.string.force_stop_dlg_title))
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(getString(R.string.force_stop_dlg_text))
-            .setPositiveButton(R.string.dlg_ok,
-                new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface dialog, int which) {
-                    // Force stop
-                    forceStopPackage(mAppEntry.info.packageName);
-                }
-            })
-            .setNegativeButton(R.string.dlg_cancel, null)
-            .create();
-        case DLG_MOVE_FAILED:
-            CharSequence msg = getString(R.string.move_app_failed_dlg_text,
-                    getMoveErrMsg(mMoveErrorCode));
-            return new AlertDialog.Builder(this)
-            .setTitle(getString(R.string.move_app_failed_dlg_title))
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(msg)
-            .setNeutralButton(R.string.dlg_ok, null)
-            .create();
+    public static class MyAlertDialogFragment extends DialogFragment {
+
+        public static MyAlertDialogFragment newInstance(int id, int moveErrorCode) {
+            MyAlertDialogFragment frag = new MyAlertDialogFragment();
+            Bundle args = new Bundle();
+            args.putInt("id", id);
+            args.putInt("moveError", moveErrorCode);
+            frag.setArguments(args);
+            return frag;
         }
-        return null;
+
+        InstalledAppDetails getOwner() {
+            return (InstalledAppDetails)getTargetFragment();
+        }
+
+        @Override
+        public Dialog onCreateDialog(Bundle savedInstanceState) {
+            int id = getArguments().getInt("id");
+            int moveErrorCode = getArguments().getInt("moveError");
+            switch (id) {
+                case DLG_CLEAR_DATA:
+                    return new AlertDialog.Builder(getActivity())
+                    .setTitle(getActivity().getText(R.string.clear_data_dlg_title))
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(getActivity().getText(R.string.clear_data_dlg_text))
+                    .setPositiveButton(R.string.dlg_ok,
+                            new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            // Clear user data here
+                            getOwner().initiateClearUserData();
+                        }
+                    })
+                    .setNegativeButton(R.string.dlg_cancel, null)
+                    .create();
+                case DLG_FACTORY_RESET:
+                    return new AlertDialog.Builder(getActivity())
+                    .setTitle(getActivity().getText(R.string.app_factory_reset_dlg_title))
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(getActivity().getText(R.string.app_factory_reset_dlg_text))
+                    .setPositiveButton(R.string.dlg_ok,
+                            new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            // Clear user data here
+                            getOwner().uninstallPkg(getOwner().mAppEntry.info.packageName);
+                        }
+                    })
+                    .setNegativeButton(R.string.dlg_cancel, null)
+                    .create();
+                case DLG_APP_NOT_FOUND:
+                    return new AlertDialog.Builder(getActivity())
+                    .setTitle(getActivity().getText(R.string.app_not_found_dlg_title))
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(getActivity().getText(R.string.app_not_found_dlg_title))
+                    .setNeutralButton(getActivity().getText(R.string.dlg_ok),
+                            new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            //force to recompute changed value
+                            getOwner().setIntentAndFinish(true, true);
+                        }
+                    })
+                    .create();
+                case DLG_CANNOT_CLEAR_DATA:
+                    return new AlertDialog.Builder(getActivity())
+                    .setTitle(getActivity().getText(R.string.clear_failed_dlg_title))
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(getActivity().getText(R.string.clear_failed_dlg_text))
+                    .setNeutralButton(R.string.dlg_ok,
+                            new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            getOwner().mClearDataButton.setEnabled(false);
+                            //force to recompute changed value
+                            getOwner().setIntentAndFinish(false, false);
+                        }
+                    })
+                    .create();
+                case DLG_FORCE_STOP:
+                    return new AlertDialog.Builder(getActivity())
+                    .setTitle(getActivity().getText(R.string.force_stop_dlg_title))
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(getActivity().getText(R.string.force_stop_dlg_text))
+                    .setPositiveButton(R.string.dlg_ok,
+                        new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            // Force stop
+                            getOwner().forceStopPackage(getOwner().mAppEntry.info.packageName);
+                        }
+                    })
+                    .setNegativeButton(R.string.dlg_cancel, null)
+                    .create();
+                case DLG_MOVE_FAILED:
+                    CharSequence msg = getActivity().getString(R.string.move_app_failed_dlg_text,
+                            getOwner().getMoveErrMsg(moveErrorCode));
+                    return new AlertDialog.Builder(getActivity())
+                    .setTitle(getActivity().getText(R.string.move_app_failed_dlg_title))
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(msg)
+                    .setNeutralButton(R.string.dlg_ok, null)
+                    .create();
+                case DLG_DISABLE:
+                    return new AlertDialog.Builder(getActivity())
+                    .setTitle(getActivity().getText(R.string.app_disable_dlg_title))
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(getActivity().getText(R.string.app_disable_dlg_text))
+                    .setPositiveButton(R.string.dlg_ok,
+                        new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            // Disable the app
+                            new DisableChanger(getOwner(), getOwner().mAppEntry.info,
+                                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
+                            .execute((Object)null);
+                        }
+                    })
+                    .setNegativeButton(R.string.dlg_cancel, null)
+                    .create();
+            }
+            throw new IllegalArgumentException("unknown id " + id);
+        }
     }
 
     private void uninstallPkg(String packageName) {
@@ -684,27 +794,45 @@ public class InstalledAppDetails extends Activity
     }
 
     private void forceStopPackage(String pkgName) {
-        ActivityManager am = (ActivityManager)getSystemService(
+        ActivityManager am = (ActivityManager)getActivity().getSystemService(
                 Context.ACTIVITY_SERVICE);
         am.forceStopPackage(pkgName);
+        mState.invalidatePackage(pkgName);
+        ApplicationsState.AppEntry newEnt = mState.getEntry(pkgName);
+        if (newEnt != null) {
+            mAppEntry = newEnt;
+        }
         checkForceStop();
     }
 
     private final BroadcastReceiver mCheckKillProcessesReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            mForceStopButton.setEnabled(getResultCode() != RESULT_CANCELED);
-            mForceStopButton.setOnClickListener(InstalledAppDetails.this);
+            updateForceStopButton(getResultCode() != Activity.RESULT_CANCELED);
         }
     };
+
+    private void updateForceStopButton(boolean enabled) {
+        mForceStopButton.setEnabled(enabled);
+        mForceStopButton.setOnClickListener(InstalledAppDetails.this);
+    }
     
     private void checkForceStop() {
-        Intent intent = new Intent(Intent.ACTION_QUERY_PACKAGE_RESTART,
-                Uri.fromParts("package", mAppEntry.info.packageName, null));
-        intent.putExtra(Intent.EXTRA_PACKAGES, new String[] { mAppEntry.info.packageName });
-        intent.putExtra(Intent.EXTRA_UID, mAppEntry.info.uid);
-        sendOrderedBroadcast(intent, null, mCheckKillProcessesReceiver, null,
-                Activity.RESULT_CANCELED, null, null);
+        if (mDpm.packageHasActiveAdmins(mPackageInfo.packageName)) {
+            // User can't force stop device admin.
+            updateForceStopButton(false);
+        } else if ((mAppEntry.info.flags&ApplicationInfo.FLAG_STOPPED) == 0) {
+            // If the app isn't explicitly stopped, then always show the
+            // force stop button.
+            updateForceStopButton(true);
+        } else {
+            Intent intent = new Intent(Intent.ACTION_QUERY_PACKAGE_RESTART,
+                    Uri.fromParts("package", mAppEntry.info.packageName, null));
+            intent.putExtra(Intent.EXTRA_PACKAGES, new String[] { mAppEntry.info.packageName });
+            intent.putExtra(Intent.EXTRA_UID, mAppEntry.info.uid);
+            getActivity().sendOrderedBroadcast(intent, null, mCheckKillProcessesReceiver, null,
+                    Activity.RESULT_CANCELED, null, null);
+        }
     }
     
     static class DisableChanger extends AsyncTask<Object, Object, Object> {
@@ -735,12 +863,16 @@ public class InstalledAppDetails extends Activity
         String packageName = mAppEntry.info.packageName;
         if(v == mUninstallButton) {
             if (mUpdatedSysApp) {
-                showDialogInner(DLG_FACTORY_RESET);
+                showDialogInner(DLG_FACTORY_RESET, 0);
             } else {
                 if ((mAppEntry.info.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
-                    new DisableChanger(this, mAppEntry.info, mAppEntry.info.enabled ?
-                            PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                            : PackageManager.COMPONENT_ENABLED_STATE_DEFAULT).execute((Object)null);
+                    if (mAppEntry.info.enabled) {
+                        showDialogInner(DLG_DISABLE, 0);
+                    } else {
+                        new DisableChanger(this, mAppEntry.info,
+                                PackageManager.COMPONENT_ENABLED_STATE_DEFAULT)
+                        .execute((Object)null);
+                    }
                 } else {
                     uninstallPkg(packageName);
                 }
@@ -760,7 +892,7 @@ public class InstalledAppDetails extends Activity
                         mAppEntry.info.manageSpaceActivityName);
                 startActivityForResult(intent, -1);
             } else {
-                showDialogInner(DLG_CLEAR_DATA);
+                showDialogInner(DLG_CLEAR_DATA, 0);
             }
         } else if (v == mClearCacheButton) {
             // Lazy initialization of observer
@@ -769,7 +901,7 @@ public class InstalledAppDetails extends Activity
             }
             mPm.deleteApplicationCacheFiles(packageName, mClearCacheObserver);
         } else if (v == mForceStopButton) {
-            showDialogInner(DLG_FORCE_STOP);
+            showDialogInner(DLG_FORCE_STOP, 0);
             //forceStopPackage(mAppInfo.packageName);
         } else if (v == mMoveAppButton) {
             if (mPackageMoveObserver == null) {
@@ -780,6 +912,19 @@ public class InstalledAppDetails extends Activity
             mMoveInProgress = true;
             refreshButtons();
             mPm.movePackage(mAppEntry.info.packageName, mPackageMoveObserver, moveFlags);
+        }
+    }
+
+    @Override
+    public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+        String packageName = mAppEntry.info.packageName;
+        ActivityManager am = (ActivityManager)
+                getActivity().getSystemService(Context.ACTIVITY_SERVICE);
+        if (buttonView == mAskCompatibilityCB) {
+            am.setPackageAskScreenCompat(packageName, isChecked);
+        } else if (buttonView == mEnableCompatibilityCB) {
+            am.setPackageScreenCompatMode(packageName, isChecked ?
+                    ActivityManager.COMPAT_MODE_ENABLED : ActivityManager.COMPAT_MODE_DISABLED);
         }
     }
 }

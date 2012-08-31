@@ -16,32 +16,31 @@
 
 package com.android.settings.bluetooth;
 
-import com.android.settings.R;
-import com.android.settings.WirelessSettings;
-
 import android.bluetooth.BluetoothAdapter;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.preference.Preference;
-import android.preference.CheckBoxPreference;
 import android.provider.Settings;
-import android.text.TextUtils;
+import android.widget.CompoundButton;
+import android.widget.Switch;
 import android.widget.Toast;
+
+import com.android.settings.R;
+import com.android.settings.WirelessSettings;
 
 /**
  * BluetoothEnabler is a helper to manage the Bluetooth on/off checkbox
- * preference. It is turns on/off Bluetooth and ensures the summary of the
+ * preference. It turns on/off Bluetooth and ensures the summary of the
  * preference reflects the current state.
  */
-public class BluetoothEnabler implements Preference.OnPreferenceChangeListener {
+public final class BluetoothEnabler implements CompoundButton.OnCheckedChangeListener {
     private final Context mContext;
-    private final CheckBoxPreference mCheckBox;
-    private final CharSequence mOriginalSummary;
+    private Switch mSwitch;
 
-    private final LocalBluetoothManager mLocalManager;
+    private final LocalBluetoothAdapter mLocalAdapter;
     private final IntentFilter mIntentFilter;
+
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -50,83 +49,91 @@ public class BluetoothEnabler implements Preference.OnPreferenceChangeListener {
         }
     };
 
-    public BluetoothEnabler(Context context, CheckBoxPreference checkBox) {
+    public BluetoothEnabler(Context context, Switch switch_) {
         mContext = context;
-        mCheckBox = checkBox;
-        mOriginalSummary = checkBox.getSummary();
-        checkBox.setPersistent(false);
+        mSwitch = switch_;
 
-        mLocalManager = LocalBluetoothManager.getInstance(context);
-        if (mLocalManager == null) {
+        LocalBluetoothManager manager = LocalBluetoothManager.getInstance(context);
+        if (manager == null) {
             // Bluetooth is not supported
-            checkBox.setEnabled(false);
+            mLocalAdapter = null;
+            mSwitch.setEnabled(false);
+        } else {
+            mLocalAdapter = manager.getBluetoothAdapter();
         }
         mIntentFilter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
     }
 
     public void resume() {
-        if (mLocalManager == null) {
+        if (mLocalAdapter == null) {
+            mSwitch.setEnabled(false);
             return;
         }
 
         // Bluetooth state is not sticky, so set it manually
-        handleStateChanged(mLocalManager.getBluetoothState());
+        handleStateChanged(mLocalAdapter.getBluetoothState());
 
         mContext.registerReceiver(mReceiver, mIntentFilter);
-        mCheckBox.setOnPreferenceChangeListener(this);
+        mSwitch.setOnCheckedChangeListener(this);
     }
 
     public void pause() {
-        if (mLocalManager == null) {
+        if (mLocalAdapter == null) {
             return;
         }
 
         mContext.unregisterReceiver(mReceiver);
-        mCheckBox.setOnPreferenceChangeListener(null);
+        mSwitch.setOnCheckedChangeListener(null);
     }
 
-    public boolean onPreferenceChange(Preference preference, Object value) {
-        boolean enable = (Boolean) value;
+    public void setSwitch(Switch switch_) {
+        if (mSwitch == switch_) return;
+        mSwitch.setOnCheckedChangeListener(null);
+        mSwitch = switch_;
+        mSwitch.setOnCheckedChangeListener(this);
 
+        int bluetoothState = BluetoothAdapter.STATE_OFF;
+        if (mLocalAdapter != null) bluetoothState = mLocalAdapter.getBluetoothState();
+        boolean isOn = bluetoothState == BluetoothAdapter.STATE_ON;
+        boolean isOff = bluetoothState == BluetoothAdapter.STATE_OFF;
+        mSwitch.setChecked(isOn);
+        mSwitch.setEnabled(isOn || isOff);
+    }
+
+    public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
         // Show toast message if Bluetooth is not allowed in airplane mode
-        if (enable && !WirelessSettings
-                .isRadioAllowed(mContext, Settings.System.RADIO_BLUETOOTH)) {
-            Toast.makeText(mContext, R.string.wifi_in_airplane_mode,
-                    Toast.LENGTH_SHORT).show();
-            return false;
+        if (isChecked &&
+                !WirelessSettings.isRadioAllowed(mContext, Settings.System.RADIO_BLUETOOTH)) {
+            Toast.makeText(mContext, R.string.wifi_in_airplane_mode, Toast.LENGTH_SHORT).show();
+            // Reset switch to off
+            buttonView.setChecked(false);
         }
 
-        mLocalManager.setBluetoothEnabled(enable);
-        mCheckBox.setEnabled(false);
-
-        // Don't update UI to opposite state until we're sure
-        return false;
+        if (mLocalAdapter != null) {
+            mLocalAdapter.setBluetoothEnabled(isChecked);
+        }
+        mSwitch.setEnabled(false);
     }
 
-    private void handleStateChanged(int state) {
+    void handleStateChanged(int state) {
         switch (state) {
             case BluetoothAdapter.STATE_TURNING_ON:
-                mCheckBox.setSummary(R.string.wifi_starting);
-                mCheckBox.setEnabled(false);
+                mSwitch.setEnabled(false);
                 break;
             case BluetoothAdapter.STATE_ON:
-                mCheckBox.setChecked(true);
-                mCheckBox.setSummary(null);
-                mCheckBox.setEnabled(true);
+                mSwitch.setChecked(true);
+                mSwitch.setEnabled(true);
                 break;
             case BluetoothAdapter.STATE_TURNING_OFF:
-                mCheckBox.setSummary(R.string.wifi_stopping);
-                mCheckBox.setEnabled(false);
+                mSwitch.setEnabled(false);
                 break;
             case BluetoothAdapter.STATE_OFF:
-                mCheckBox.setChecked(false);
-                mCheckBox.setSummary(mOriginalSummary);
-                mCheckBox.setEnabled(true);
+                mSwitch.setChecked(false);
+                mSwitch.setEnabled(true);
                 break;
             default:
-                mCheckBox.setChecked(false);
-                mCheckBox.setSummary(R.string.wifi_error);
-                mCheckBox.setEnabled(true);
+                mSwitch.setChecked(false);
+                mSwitch.setEnabled(true);
         }
     }
 }

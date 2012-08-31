@@ -16,24 +16,19 @@
 
 package com.android.settings;
 
-import android.app.AlertDialog;
-import android.content.DialogInterface;
-import android.content.res.Configuration;
+import android.content.Intent;
 import android.os.Bundle;
 import android.preference.CheckBoxPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
-import android.preference.PreferenceActivity;
-import android.preference.PreferenceScreen;
 import android.preference.Preference.OnPreferenceChangeListener;
+import android.preference.PreferenceScreen;
 import android.provider.Settings;
 
-public class ApplicationSettings extends PreferenceActivity implements
-        DialogInterface.OnClickListener {
+public class ApplicationSettings extends SettingsPreferenceFragment {
     
-    private static final String KEY_TOGGLE_INSTALL_APPLICATIONS = "toggle_install_applications";
+    private static final String KEY_TOGGLE_ADVANCED_SETTINGS = "toggle_advanced_settings";
     private static final String KEY_APP_INSTALL_LOCATION = "app_install_location";
-    private static final String KEY_QUICK_LAUNCH = "quick_launch";
 
     // App installation location. Default is ask the user.
     private static final int APP_INSTALL_AUTO = 0;
@@ -44,20 +39,24 @@ public class ApplicationSettings extends PreferenceActivity implements
     private static final String APP_INSTALL_SDCARD_ID = "sdcard";
     private static final String APP_INSTALL_AUTO_ID = "auto";
     
-    private CheckBoxPreference mToggleAppInstallation;
-
+    private CheckBoxPreference mToggleAdvancedSettings;
     private ListPreference mInstallLocation;
 
-    private DialogInterface mWarnInstallApps;
-
     @Override
-    protected void onCreate(Bundle icicle) {
+    public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
 
         addPreferencesFromResource(R.xml.application_settings);
 
-        mToggleAppInstallation = (CheckBoxPreference) findPreference(KEY_TOGGLE_INSTALL_APPLICATIONS);
-        mToggleAppInstallation.setChecked(isNonMarketAppsAllowed());
+        mToggleAdvancedSettings = (CheckBoxPreference)findPreference(
+                KEY_TOGGLE_ADVANCED_SETTINGS);
+        mToggleAdvancedSettings.setChecked(isAdvancedSettingsEnabled());
+        getPreferenceScreen().removePreference(mToggleAdvancedSettings);
+
+        // not ready for prime time yet
+        if (false) {
+            getPreferenceScreen().removePreference(mInstallLocation);
+        }
 
         mInstallLocation = (ListPreference) findPreference(KEY_APP_INSTALL_LOCATION);
         // Is app default install location set?
@@ -74,12 +73,6 @@ public class ApplicationSettings extends PreferenceActivity implements
                     return false;
                 }
             });
-        }
-
-        if (getResources().getConfiguration().keyboard == Configuration.KEYBOARD_NOKEYS) {
-            // No hard keyboard, remove the setting for quick launch
-            Preference quickLaunchSetting = findPreference(KEY_QUICK_LAUNCH);
-            getPreferenceScreen().removePreference(quickLaunchSetting);
         }
     }
 
@@ -102,43 +95,29 @@ public class ApplicationSettings extends PreferenceActivity implements
     }
 
     @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (mWarnInstallApps != null) {
-            mWarnInstallApps.dismiss();
-        }
-    }
-
-    @Override
     public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, Preference preference) {
-        if (preference == mToggleAppInstallation) {
-            if (mToggleAppInstallation.isChecked()) {
-                mToggleAppInstallation.setChecked(false);
-                warnAppInstallation();
-            } else {
-                setNonMarketAppsAllowed(false);
-            }
+        if (preference == mToggleAdvancedSettings) {
+            boolean value = mToggleAdvancedSettings.isChecked();
+            setAdvancedSettingsEnabled(value);
         }
 
         return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
-    public void onClick(DialogInterface dialog, int which) {
-        if (dialog == mWarnInstallApps && which == DialogInterface.BUTTON_POSITIVE) {
-            setNonMarketAppsAllowed(true);
-            mToggleAppInstallation.setChecked(true);
-        }
+    private boolean isAdvancedSettingsEnabled() {
+        return Settings.System.getInt(getContentResolver(), 
+                                      Settings.System.ADVANCED_SETTINGS,
+                                      Settings.System.ADVANCED_SETTINGS_DEFAULT) > 0;
     }
 
-    private void setNonMarketAppsAllowed(boolean enabled) {
+    private void setAdvancedSettingsEnabled(boolean enabled) {
+        int value = enabled ? 1 : 0;
         // Change the system setting
-        Settings.Secure.putInt(getContentResolver(), Settings.Secure.INSTALL_NON_MARKET_APPS, 
-                                enabled ? 1 : 0);
-    }
-    
-    private boolean isNonMarketAppsAllowed() {
-        return Settings.Secure.getInt(getContentResolver(), 
-                                      Settings.Secure.INSTALL_NON_MARKET_APPS, 0) > 0;
+        Settings.Secure.putInt(getContentResolver(), Settings.System.ADVANCED_SETTINGS, value);
+        // TODO: the settings thing should broadcast this for thread safety purposes.
+        Intent intent = new Intent(Intent.ACTION_ADVANCED_SETTINGS_CHANGED);
+        intent.putExtra("state", value);
+        getActivity().sendBroadcast(intent);
     }
 
     private String getAppInstallLocation() {
@@ -154,15 +133,5 @@ public class ApplicationSettings extends PreferenceActivity implements
             // Default value, should not happen.
             return APP_INSTALL_AUTO_ID;
         }
-    }
-
-    private void warnAppInstallation() {
-        mWarnInstallApps = new AlertDialog.Builder(this)
-                .setTitle(getString(R.string.error_title))
-                .setIcon(com.android.internal.R.drawable.ic_dialog_alert)
-                .setMessage(getResources().getString(R.string.install_all_warning))
-                .setPositiveButton(android.R.string.yes, this)
-                .setNegativeButton(android.R.string.no, null)
-                .show();
     }
 }

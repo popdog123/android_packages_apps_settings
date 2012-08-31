@@ -17,23 +17,22 @@
 package com.android.settings;
 
 import android.app.Activity;
-import android.app.AlertDialog;
-import android.content.DialogInterface;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.content.SharedPreferences;
 import android.content.res.Resources;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.TrafficStats;
 import android.net.Uri;
 import android.os.AsyncResult;
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.INetStatService;
 import android.os.Message;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemProperties;
-import android.preference.PreferenceManager;
 import android.telephony.CellLocation;
 import android.telephony.PhoneStateListener;
 import android.telephony.ServiceState;
@@ -66,9 +65,8 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.DefaultHttpClient;
 
-import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
@@ -135,7 +133,6 @@ public class RadioInfo extends Activity {
     private TelephonyManager mTelephonyManager;
     private Phone phone = null;
     private PhoneStateIntentReceiver mPhoneStateReceiver;
-    private INetStatService netstat;
 
     private String mPingIpAddrResult;
     private String mPingHostnameResult;
@@ -285,6 +282,15 @@ public class RadioInfo extends Activity {
         radioPowerButton = (Button) findViewById(R.id.radio_power);
         radioPowerButton.setOnClickListener(mPowerButtonHandler);
 
+        imsRegRequiredButton = (Button) findViewById(R.id.ims_reg_required);
+        imsRegRequiredButton.setOnClickListener(mImsRegRequiredHandler);
+
+        smsOverImsButton = (Button) findViewById(R.id.sms_over_ims);
+        smsOverImsButton.setOnClickListener(mSmsOverImsHandler);
+
+        lteRamDumpButton = (Button) findViewById(R.id.lte_ram_dump);
+        lteRamDumpButton.setOnClickListener(mLteRamDumpHandler);
+
         pingTestButton = (Button) findViewById(R.id.ping_test);
         pingTestButton.setOnClickListener(mPingButtonHandler);
         updateSmscButton = (Button) findViewById(R.id.update_smsc);
@@ -313,8 +319,6 @@ public class RadioInfo extends Activity {
         phone.getNeighboringCids(
                 mHandler.obtainMessage(EVENT_QUERY_NEIGHBORING_CIDS_DONE));
 
-        netstat = INetStatService.Stub.asInterface(ServiceManager.getService("netstat"));
-
         CellLocation.requestLocationUpdate();
     }
 
@@ -332,6 +336,9 @@ public class RadioInfo extends Activity {
         updateDataStats();
         updateDataStats2();
         updatePowerState();
+        updateImsRegRequiredState();
+        updateSmsOverImsState();
+        updateLteRamDumpState();
         updateProperties();
         updateDnsCheckState();
 
@@ -429,7 +436,7 @@ public class RadioInfo extends Activity {
 
         if (-1 == signalDbm) signalDbm = 0;
 
-        int signalAsu = mPhoneStateReceiver.getSignalStrength();
+        int signalAsu = mPhoneStateReceiver.getSignalStrengthLevelAsu();
 
         if (-1 == signalAsu) signalAsu = 0;
 
@@ -627,19 +634,16 @@ public class RadioInfo extends Activity {
     private final void updateDataStats2() {
         Resources r = getResources();
 
-        try {
-            long txPackets = netstat.getMobileTxPackets();
-            long rxPackets = netstat.getMobileRxPackets();
-            long txBytes   = netstat.getMobileTxBytes();
-            long rxBytes   = netstat.getMobileRxBytes();
+        long txPackets = TrafficStats.getMobileTxPackets();
+        long rxPackets = TrafficStats.getMobileRxPackets();
+        long txBytes   = TrafficStats.getMobileTxBytes();
+        long rxBytes   = TrafficStats.getMobileRxBytes();
 
-            String packets = r.getString(R.string.radioInfo_display_packets);
-            String bytes   = r.getString(R.string.radioInfo_display_bytes);
+        String packets = r.getString(R.string.radioInfo_display_packets);
+        String bytes   = r.getString(R.string.radioInfo_display_bytes);
 
-            sent.setText(txPackets + " " + packets + ", " + txBytes + " " + bytes);
-            received.setText(rxPackets + " " + packets + ", " + rxBytes + " " + bytes);
-        } catch (RemoteException e) {
-        }
+        sent.setText(txPackets + " " + packets + ", " + txBytes + " " + bytes);
+        received.setText(rxPackets + " " + packets + ", " + rxBytes + " " + bytes);
     }
 
     /**
@@ -757,50 +761,41 @@ public class RadioInfo extends Activity {
     private final void updatePdpList() {
         StringBuilder sb = new StringBuilder("========DATA=======\n");
 
-        List<DataConnection> dcs = phone.getCurrentDataConnectionList();
-
-        for (DataConnection dc : dcs) {
-            sb.append("    State: ").append(dc.getStateAsString()).append("\n");
-            if (dc.isActive()) {
-                long timeElapsed =
-                    (System.currentTimeMillis() - dc.getConnectionTime())/1000;
-                sb.append("    connected at ")
-                  .append(DateUtils.timeString(dc.getConnectionTime()))
-                  .append(" and elapsed ")
-                  .append(DateUtils.formatElapsedTime(timeElapsed));
-
-                if (dc instanceof GsmDataConnection) {
-                    GsmDataConnection pdp = (GsmDataConnection)dc;
-                    sb.append("\n    to ")
-                      .append(pdp.getApn().toString());
-                }
-                sb.append("\ninterface: ")
-                  .append(phone.getInterfaceName(phone.getActiveApnTypes()[0]))
-                  .append("\naddress: ")
-                  .append(phone.getIpAddress(phone.getActiveApnTypes()[0]))
-                  .append("\ngateway: ")
-                  .append(phone.getGateway(phone.getActiveApnTypes()[0]));
-                String[] dns = phone.getDnsServers(phone.getActiveApnTypes()[0]);
-                if (dns != null) {
-                    sb.append("\ndns: ").append(dns[0]).append(", ").append(dns[1]);
-                }
-            } else if (dc.isInactive()) {
-                sb.append("    disconnected with last try at ")
-                  .append(DateUtils.timeString(dc.getLastFailTime()))
-                  .append("\n    fail because ")
-                  .append(dc.getLastFailCause().toString());
-            } else {
-                if (dc instanceof GsmDataConnection) {
-                    GsmDataConnection pdp = (GsmDataConnection)dc;
-                    sb.append("    is connecting to ")
-                      .append(pdp.getApn().toString());
-                } else {
-                    sb.append("    is connecting");
-                }
-            }
-            sb.append("\n===================");
-        }
-
+//        List<DataConnection> dcs = phone.getCurrentDataConnectionList();
+//
+//        for (DataConnection dc : dcs) {
+//            sb.append("    State=").append(dc.getStateAsString()).append("\n");
+//            if (dc.isActive()) {
+//                long timeElapsed =
+//                    (System.currentTimeMillis() - dc.getConnectionTime())/1000;
+//                sb.append("    connected at ")
+//                  .append(DateUtils.timeString(dc.getConnectionTime()))
+//                  .append(" and elapsed ")
+//                  .append(DateUtils.formatElapsedTime(timeElapsed));
+//
+//                if (dc instanceof GsmDataConnection) {
+//                    GsmDataConnection pdp = (GsmDataConnection)dc;
+//                    sb.append("\n    to ")
+//                      .append(pdp.getApn().toString());
+//                }
+//                sb.append("\nLinkProperties: ");
+//                sb.append(phone.getLinkProperties(phone.getActiveApnTypes()[0]).toString());
+//            } else if (dc.isInactive()) {
+//                sb.append("    disconnected with last try at ")
+//                  .append(DateUtils.timeString(dc.getLastFailTime()))
+//                  .append("\n    fail because ")
+//                  .append(dc.getLastFailCause().toString());
+//            } else {
+//                if (dc instanceof GsmDataConnection) {
+//                    GsmDataConnection pdp = (GsmDataConnection)dc;
+//                    sb.append("    is connecting to ")
+//                      .append(pdp.getApn().toString());
+//                } else {
+//                    sb.append("    is connecting");
+//                }
+//            }
+//            sb.append("\n===================");
+//        }
 
         disconnects.setText(sb.toString());
     }
@@ -869,13 +864,15 @@ public class RadioInfo extends Activity {
 
     private MenuItem.OnMenuItemClickListener mToggleData = new MenuItem.OnMenuItemClickListener() {
         public boolean onMenuItemClick(MenuItem item) {
+            ConnectivityManager cm =
+                    (ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
             int state = mTelephonyManager.getDataState();
             switch (state) {
                 case TelephonyManager.DATA_CONNECTED:
-                    phone.disableDataConnectivity();
+                    cm.setMobileDataEnabled(false);
                     break;
                 case TelephonyManager.DATA_DISCONNECTED:
-                    phone.enableDataConnectivity();
+                    cm.setMobileDataEnabled(true);
                     break;
                 default:
                     // do nothing
@@ -891,6 +888,82 @@ public class RadioInfo extends Activity {
             phone.setRadioPower(!isRadioOn());
         }
     };
+
+    private Button imsRegRequiredButton;
+    static final String PROPERTY_IMS_REG_REQUIRED = "persist.radio.imsregrequired";
+    OnClickListener mImsRegRequiredHandler = new OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            Log.d(TAG, String.format("toggle %s: currently %s",
+                PROPERTY_IMS_REG_REQUIRED, (isImsRegRequired() ? "on":"off")));
+            boolean newValue = !isImsRegRequired();
+            SystemProperties.set(PROPERTY_IMS_REG_REQUIRED,
+                    newValue ? "1":"0");
+            updateImsRegRequiredState();
+        }
+    };
+
+    private boolean isImsRegRequired() {
+        return SystemProperties.getBoolean(PROPERTY_IMS_REG_REQUIRED, false);
+    }
+
+    private void updateImsRegRequiredState() {
+        Log.d(TAG, "updateImsRegRequiredState isImsRegRequired()=" + isImsRegRequired());
+        String buttonText = isImsRegRequired() ?
+                            getString(R.string.ims_reg_required_off) :
+                            getString(R.string.ims_reg_required_on);
+        imsRegRequiredButton.setText(buttonText);
+    }
+
+    private Button smsOverImsButton;
+    static final String PROPERTY_SMS_OVER_IMS = "persist.radio.imsallowmtsms";
+    OnClickListener mSmsOverImsHandler = new OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            Log.d(TAG, String.format("toggle %s: currently %s",
+                    PROPERTY_SMS_OVER_IMS, (isSmsOverImsEnabled() ? "on":"off")));
+            boolean newValue = !isSmsOverImsEnabled();
+            SystemProperties.set(PROPERTY_SMS_OVER_IMS, newValue ? "1":"0");
+            updateSmsOverImsState();
+        }
+    };
+
+    private boolean isSmsOverImsEnabled() {
+        return SystemProperties.getBoolean(PROPERTY_SMS_OVER_IMS, false);
+    }
+
+    private void updateSmsOverImsState() {
+        Log.d(TAG, "updateSmsOverImsState isSmsOverImsEnabled()=" + isSmsOverImsEnabled());
+        String buttonText = isSmsOverImsEnabled() ?
+                            getString(R.string.sms_over_ims_off) :
+                            getString(R.string.sms_over_ims_on);
+        smsOverImsButton.setText(buttonText);
+    }
+
+    private Button lteRamDumpButton;
+    static final String PROPERTY_LTE_RAM_DUMP = "persist.radio.ramdump";
+    OnClickListener mLteRamDumpHandler = new OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            Log.d(TAG, String.format("toggle %s: currently %s",
+                    PROPERTY_LTE_RAM_DUMP, (isSmsOverImsEnabled() ? "on":"off")));
+            boolean newValue = !isLteRamDumpEnabled();
+            SystemProperties.set(PROPERTY_LTE_RAM_DUMP, newValue ? "1":"0");
+            updateLteRamDumpState();
+        }
+    };
+
+    private boolean isLteRamDumpEnabled() {
+        return SystemProperties.getBoolean(PROPERTY_LTE_RAM_DUMP, false);
+    }
+
+    private void updateLteRamDumpState() {
+        Log.d(TAG, "updateLteRamDumpState isLteRamDumpEnabled()=" + isLteRamDumpEnabled());
+        String buttonText = isLteRamDumpEnabled() ?
+                            getString(R.string.lte_ram_dump_off) :
+                            getString(R.string.lte_ram_dump_on);
+        lteRamDumpButton.setText(buttonText);
+    }
 
     OnClickListener mDnsCheckButtonHandler = new OnClickListener() {
         public void onClick(View v) {

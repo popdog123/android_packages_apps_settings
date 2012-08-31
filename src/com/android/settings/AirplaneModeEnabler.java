@@ -16,18 +16,17 @@
 
 package com.android.settings;
 
-import com.android.internal.telephony.PhoneStateIntentReceiver;
-
 import android.content.Context;
 import android.content.Intent;
+import android.database.ContentObserver;
 import android.os.Handler;
 import android.os.Message;
 import android.os.SystemProperties;
 import android.preference.CheckBoxPreference;
 import android.preference.Preference;
 import android.provider.Settings;
-import android.telephony.ServiceState;
 
+import com.android.internal.telephony.PhoneStateIntentReceiver;
 import com.android.internal.telephony.TelephonyProperties;
 
 public class AirplaneModeEnabler implements Preference.OnPreferenceChangeListener {
@@ -51,6 +50,13 @@ public class AirplaneModeEnabler implements Preference.OnPreferenceChangeListene
         }
     };
 
+    private ContentObserver mAirplaneModeObserver = new ContentObserver(new Handler()) {
+        @Override
+        public void onChange(boolean selfChange) {
+            onAirplaneModeChanged();
+        }
+    };
+
     public AirplaneModeEnabler(Context context, CheckBoxPreference airplaneModeCheckBoxPreference) {
         
         mContext = context;
@@ -64,33 +70,32 @@ public class AirplaneModeEnabler implements Preference.OnPreferenceChangeListene
 
     public void resume() {
         
-        // This is the widget enabled state, not the preference toggled state
-        mCheckBoxPref.setEnabled(true);
         mCheckBoxPref.setChecked(isAirplaneModeOn(mContext));
 
         mPhoneStateReceiver.registerIntent();
         mCheckBoxPref.setOnPreferenceChangeListener(this);
+        mContext.getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.AIRPLANE_MODE_ON), true,
+                mAirplaneModeObserver);
     }
     
     public void pause() {
         mPhoneStateReceiver.unregisterIntent();
         mCheckBoxPref.setOnPreferenceChangeListener(null);
+        mContext.getContentResolver().unregisterContentObserver(mAirplaneModeObserver);
     }
-    
+
     public static boolean isAirplaneModeOn(Context context) {
         return Settings.System.getInt(context.getContentResolver(),
                 Settings.System.AIRPLANE_MODE_ON, 0) != 0;
     }
 
     private void setAirplaneModeOn(boolean enabling) {
-        
-        mCheckBoxPref.setEnabled(false);
-        mCheckBoxPref.setSummary(enabling ? R.string.airplane_mode_turning_on
-                : R.string.airplane_mode_turning_off);
-        
         // Change the system setting
         Settings.System.putInt(mContext.getContentResolver(), Settings.System.AIRPLANE_MODE_ON, 
                                 enabling ? 1 : 0);
+        // Update the UI to reflect system setting
+        mCheckBoxPref.setChecked(enabling);
         
         // Post the intent
         Intent intent = new Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED);
@@ -100,14 +105,14 @@ public class AirplaneModeEnabler implements Preference.OnPreferenceChangeListene
 
     /**
      * Called when we've received confirmation that the airplane mode was set.
+     * TODO: We update the checkbox summary when we get notified
+     * that mobile radio is powered up/down. We should not have dependency
+     * on one radio alone. We need to do the following:
+     * - handle the case of wifi/bluetooth failures
+     * - mobile does not send failure notification, fail on timeout.
      */
     private void onAirplaneModeChanged() {
-        ServiceState serviceState = mPhoneStateReceiver.getServiceState();
-        boolean airplaneModeEnabled = serviceState.getState() == ServiceState.STATE_POWER_OFF;
-        mCheckBoxPref.setChecked(airplaneModeEnabled);
-        mCheckBoxPref.setSummary(airplaneModeEnabled ? null : 
-                mContext.getString(R.string.airplane_mode_summary));            
-        mCheckBoxPref.setEnabled(true);
+        mCheckBoxPref.setChecked(isAirplaneModeOn(mContext));
     }
     
     /**
@@ -128,7 +133,7 @@ public class AirplaneModeEnabler implements Preference.OnPreferenceChangeListene
             // update database based on the current checkbox state
             setAirplaneModeOn(isAirplaneModeOn);
         } else {
-            // update checkbox state based on database value
+            // update summary
             onAirplaneModeChanged();
         }
     }

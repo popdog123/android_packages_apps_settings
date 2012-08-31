@@ -19,6 +19,7 @@ package com.android.settings;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.storage.StorageVolume;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.Button;
@@ -55,11 +56,12 @@ public class MediaFormat extends Activity {
                 if (Utils.isMonkeyRunning()) {
                     return;
                 }
-                Intent i = getIntent();
-                String path = i.getStringExtra("path");
                 Intent intent = new Intent(ExternalStorageFormatter.FORMAT_ONLY);
-                intent.putExtra("path", path);
                 intent.setComponent(ExternalStorageFormatter.COMPONENT_NAME);
+                // Transfer the storage volume to the new intent
+                final StorageVolume storageVolume = getIntent().getParcelableExtra(
+                        StorageVolume.EXTRA_STORAGE_VOLUME);
+                intent.putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, storageVolume);
                 startService(intent);
                 finish();
             }

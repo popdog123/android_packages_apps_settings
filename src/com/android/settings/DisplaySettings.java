@@ -18,24 +18,30 @@ package com.android.settings;
 
 import static android.provider.Settings.System.SCREEN_OFF_TIMEOUT;
 
-import java.util.ArrayList;
-
+import android.app.ActivityManagerNative;
 import android.app.admin.DevicePolicyManager;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.database.ContentObserver;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.preference.CheckBoxPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
-import android.preference.PreferenceActivity;
 import android.preference.PreferenceScreen;
 import android.provider.Settings;
+import android.provider.Settings.SettingNotFoundException;
 import android.util.Log;
 import android.view.IWindowManager;
+import android.view.Surface;
 
-public class DisplaySettings extends PreferenceActivity implements
+import java.util.ArrayList;
+
+public class DisplaySettings extends SettingsPreferenceFragment implements
         Preference.OnPreferenceChangeListener {
     private static final String TAG = "DisplaySettings";
 
@@ -43,39 +49,87 @@ public class DisplaySettings extends PreferenceActivity implements
     private static final int FALLBACK_SCREEN_TIMEOUT_VALUE = 30000;
 
     private static final String KEY_SCREEN_TIMEOUT = "screen_timeout";
-    private static final String KEY_ANIMATIONS = "animations";
     private static final String KEY_ACCELEROMETER = "accelerometer";
+    private static final String KEY_FONT_SIZE = "font_size";
+    private static final String KEY_NOTIFICATION_PULSE = "notification_pulse";
 
-    private ListPreference mAnimations;
     private CheckBoxPreference mAccelerometer;
-    private float[] mAnimationScales;
+    private ListPreference mFontSizePref;
+    private CheckBoxPreference mNotificationPulse;
 
-    private IWindowManager mWindowManager;
+    private final Configuration mCurConfig = new Configuration();
+    
+    private ListPreference mScreenTimeoutPreference;
+
+    private ContentObserver mAccelerometerRotationObserver = new ContentObserver(new Handler()) {
+        @Override
+        public void onChange(boolean selfChange) {
+            updateAccelerometerRotationCheckbox();
+        }
+    };
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        ContentResolver resolver = getContentResolver();
-        mWindowManager = IWindowManager.Stub.asInterface(ServiceManager.getService("window"));
+        ContentResolver resolver = getActivity().getContentResolver();
 
         addPreferencesFromResource(R.xml.display_settings);
 
-        mAnimations = (ListPreference) findPreference(KEY_ANIMATIONS);
-        mAnimations.setOnPreferenceChangeListener(this);
         mAccelerometer = (CheckBoxPreference) findPreference(KEY_ACCELEROMETER);
         mAccelerometer.setPersistent(false);
 
-        ListPreference screenTimeoutPreference =
-            (ListPreference) findPreference(KEY_SCREEN_TIMEOUT);
-        screenTimeoutPreference.setValue(String.valueOf(Settings.System.getInt(
-                resolver, SCREEN_OFF_TIMEOUT, FALLBACK_SCREEN_TIMEOUT_VALUE)));
-        screenTimeoutPreference.setOnPreferenceChangeListener(this);
-        disableUnusableTimeouts(screenTimeoutPreference);
+        mScreenTimeoutPreference = (ListPreference) findPreference(KEY_SCREEN_TIMEOUT);
+        final long currentTimeout = Settings.System.getLong(resolver, SCREEN_OFF_TIMEOUT,
+                FALLBACK_SCREEN_TIMEOUT_VALUE);
+        mScreenTimeoutPreference.setValue(String.valueOf(currentTimeout));
+        mScreenTimeoutPreference.setOnPreferenceChangeListener(this);
+        disableUnusableTimeouts(mScreenTimeoutPreference);
+        updateTimeoutPreferenceDescription(currentTimeout);
+
+        mFontSizePref = (ListPreference) findPreference(KEY_FONT_SIZE);
+        mFontSizePref.setOnPreferenceChangeListener(this);
+        mNotificationPulse = (CheckBoxPreference) findPreference(KEY_NOTIFICATION_PULSE);
+        if (mNotificationPulse != null
+                && getResources().getBoolean(
+                        com.android.internal.R.bool.config_intrusiveNotificationLed) == false) {
+            getPreferenceScreen().removePreference(mNotificationPulse);
+        } else {
+            try {
+                mNotificationPulse.setChecked(Settings.System.getInt(resolver,
+                        Settings.System.NOTIFICATION_LIGHT_PULSE) == 1);
+                mNotificationPulse.setOnPreferenceChangeListener(this);
+            } catch (SettingNotFoundException snfe) {
+                Log.e(TAG, Settings.System.NOTIFICATION_LIGHT_PULSE + " not found");
+            }
+        }
+    }
+
+    private void updateTimeoutPreferenceDescription(long currentTimeout) {
+        ListPreference preference = mScreenTimeoutPreference;
+        String summary;
+        if (currentTimeout < 0) {
+            // Unsupported value
+            summary = "";
+        } else {
+            final CharSequence[] entries = preference.getEntries();
+            final CharSequence[] values = preference.getEntryValues();
+            int best = 0;
+            for (int i = 0; i < values.length; i++) {
+                long timeout = Long.parseLong(values[i].toString());
+                if (currentTimeout >= timeout) {
+                    best = i;
+                }
+            }
+            summary = preference.getContext().getString(R.string.screen_timeout_summary,
+                    entries[best]);
+        }
+        preference.setSummary(summary);
     }
 
     private void disableUnusableTimeouts(ListPreference screenTimeoutPreference) {
         final DevicePolicyManager dpm =
-            (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+                (DevicePolicyManager) getActivity().getSystemService(
+                Context.DEVICE_POLICY_SERVICE);
         final long maxTimeout = dpm != null ? dpm.getMaximumTimeToLock(null) : 0;
         if (maxTimeout == 0) {
             return; // policy not enforced
@@ -85,7 +139,7 @@ public class DisplaySettings extends PreferenceActivity implements
         ArrayList<CharSequence> revisedEntries = new ArrayList<CharSequence>();
         ArrayList<CharSequence> revisedValues = new ArrayList<CharSequence>();
         for (int i = 0; i < values.length; i++) {
-            long timeout = Long.valueOf(values[i].toString());
+            long timeout = Long.parseLong(values[i].toString());
             if (timeout <= maxTimeout) {
                 revisedEntries.add(entries[i]);
                 revisedValues.add(values[i]);
@@ -96,7 +150,7 @@ public class DisplaySettings extends PreferenceActivity implements
                     revisedEntries.toArray(new CharSequence[revisedEntries.size()]));
             screenTimeoutPreference.setEntryValues(
                     revisedValues.toArray(new CharSequence[revisedValues.size()]));
-            final int userPreference = Integer.valueOf(screenTimeoutPreference.getValue());
+            final int userPreference = Integer.parseInt(screenTimeoutPreference.getValue());
             if (userPreference <= maxTimeout) {
                 screenTimeoutPreference.setValue(String.valueOf(userPreference));
             } else {
@@ -108,96 +162,110 @@ public class DisplaySettings extends PreferenceActivity implements
         screenTimeoutPreference.setEnabled(revisedEntries.size() > 0);
     }
 
+    int floatToIndex(float val) {
+        String[] indices = getResources().getStringArray(R.array.entryvalues_font_size);
+        float lastVal = Float.parseFloat(indices[0]);
+        for (int i=1; i<indices.length; i++) {
+            float thisVal = Float.parseFloat(indices[i]);
+            if (val < (lastVal + (thisVal-lastVal)*.5f)) {
+                return i-1;
+            }
+            lastVal = thisVal;
+        }
+        return indices.length-1;
+    }
+    
+    public void readFontSizePreference(ListPreference pref) {
+        try {
+            mCurConfig.updateFrom(ActivityManagerNative.getDefault().getConfiguration());
+        } catch (RemoteException e) {
+            Log.w(TAG, "Unable to retrieve font size");
+        }
+
+        // mark the appropriate item in the preferences list
+        int index = floatToIndex(mCurConfig.fontScale);
+        pref.setValueIndex(index);
+
+        // report the current size in the summary text
+        final Resources res = getResources();
+        String[] fontSizeNames = res.getStringArray(R.array.entries_font_size);
+        pref.setSummary(String.format(res.getString(R.string.summary_font_size),
+                fontSizeNames[index]));
+    }
+    
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
 
-        updateState(true);
+        updateState();
+        getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION), true,
+                mAccelerometerRotationObserver);
     }
 
-    private void updateState(boolean force) {
-        int animations = 0;
-        try {
-            mAnimationScales = mWindowManager.getAnimationScales();
-        } catch (RemoteException e) {
-        }
-        if (mAnimationScales != null) {
-            if (mAnimationScales.length >= 1) {
-                animations = ((int)(mAnimationScales[0]+.5f)) % 10;
-            }
-            if (mAnimationScales.length >= 2) {
-                animations += (((int)(mAnimationScales[1]+.5f)) & 0x7) * 10;
-            }
-        }
-        int idx = 0;
-        int best = 0;
-        CharSequence[] aents = mAnimations.getEntryValues();
-        for (int i=0; i<aents.length; i++) {
-            int val = Integer.parseInt(aents[i].toString());
-            if (val <= animations && val > best) {
-                best = val;
-                idx = i;
-            }
-        }
-        mAnimations.setValueIndex(idx);
-        updateAnimationsSummary(mAnimations.getValue());
+    @Override
+    public void onPause() {
+        super.onPause();
+
+        getContentResolver().unregisterContentObserver(mAccelerometerRotationObserver);
+    }
+
+    private void updateState() {
+        updateAccelerometerRotationCheckbox();
+        readFontSizePreference(mFontSizePref);
+    }
+
+    private void updateAccelerometerRotationCheckbox() {
         mAccelerometer.setChecked(Settings.System.getInt(
                 getContentResolver(),
                 Settings.System.ACCELEROMETER_ROTATION, 0) != 0);
     }
 
-    private void updateAnimationsSummary(Object value) {
-        CharSequence[] summaries = getResources().getTextArray(R.array.animations_summaries);
-        CharSequence[] values = mAnimations.getEntryValues();
-        for (int i=0; i<values.length; i++) {
-            //Log.i("foo", "Comparing entry "+ values[i] + " to current "
-            //        + mAnimations.getValue());
-            if (values[i].equals(value)) {
-                mAnimations.setSummary(summaries[i]);
-                break;
-            }
+    public void writeFontSizePreference(Object objValue) {
+        try {
+            mCurConfig.fontScale = Float.parseFloat(objValue.toString());
+            ActivityManagerNative.getDefault().updatePersistentConfiguration(mCurConfig);
+        } catch (RemoteException e) {
+            Log.w(TAG, "Unable to save font size");
         }
     }
 
     @Override
     public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, Preference preference) {
         if (preference == mAccelerometer) {
-            Settings.System.putInt(getContentResolver(),
-                    Settings.System.ACCELEROMETER_ROTATION,
-                    mAccelerometer.isChecked() ? 1 : 0);
+            try {
+                IWindowManager wm = IWindowManager.Stub.asInterface(
+                        ServiceManager.getService(Context.WINDOW_SERVICE));
+                if (mAccelerometer.isChecked()) {
+                    wm.thawRotation();
+                } else {
+                    wm.freezeRotation(Surface.ROTATION_0);
+                }
+            } catch (RemoteException exc) {
+                Log.w(TAG, "Unable to save auto-rotate setting");
+            }
+        } else if (preference == mNotificationPulse) {
+            boolean value = mNotificationPulse.isChecked();
+            Settings.System.putInt(getContentResolver(), Settings.System.NOTIFICATION_LIGHT_PULSE,
+                    value ? 1 : 0);
+            return true;
         }
-        return true;
+        return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
     public boolean onPreferenceChange(Preference preference, Object objValue) {
         final String key = preference.getKey();
-        if (KEY_ANIMATIONS.equals(key)) {
-            try {
-                int value = Integer.parseInt((String) objValue);
-                if (mAnimationScales.length >= 1) {
-                    mAnimationScales[0] = value%10;
-                }
-                if (mAnimationScales.length >= 2) {
-                    mAnimationScales[1] = (value/10)%10;
-                }
-                try {
-                    mWindowManager.setAnimationScales(mAnimationScales);
-                } catch (RemoteException e) {
-                }
-                updateAnimationsSummary(objValue);
-            } catch (NumberFormatException e) {
-                Log.e(TAG, "could not persist animation setting", e);
-            }
-
-        }
         if (KEY_SCREEN_TIMEOUT.equals(key)) {
             int value = Integer.parseInt((String) objValue);
             try {
-                Settings.System.putInt(getContentResolver(),
-                        SCREEN_OFF_TIMEOUT, value);
+                Settings.System.putInt(getContentResolver(), SCREEN_OFF_TIMEOUT, value);
+                updateTimeoutPreferenceDescription(value);
             } catch (NumberFormatException e) {
                 Log.e(TAG, "could not persist screen timeout setting", e);
             }
+        }
+        if (KEY_FONT_SIZE.equals(key)) {
+            writeFontSizePreference(objValue);
         }
 
         return true;

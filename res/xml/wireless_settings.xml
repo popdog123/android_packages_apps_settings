@@ -14,31 +14,24 @@
      limitations under the License.
 -->
 
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+        android:title="@string/wireless_networks_settings_title">
 
     <CheckBoxPreference
         android:key="toggle_airplane"
         android:title="@string/airplane_mode"
-        android:summary="@string/airplane_mode_summary"
         android:persistent="false"
         android:disableDependentsState="true" />
 
-    <!-- Programmatically will have dynamic summary, but we provide the fallback summary. -->
-    <CheckBoxPreference
-        android:key="toggle_wifi"
-        android:title="@string/wifi_quick_toggle_title"
-        android:summary="@string/wifi_quick_toggle_summary"
-        android:persistent="false" />
+    <PreferenceScreen
+        android:fragment="com.android.settings.vpn2.VpnSettings"
+        android:key="vpn_settings"
+        android:title="@string/vpn_settings_title" />
 
     <PreferenceScreen
-        android:key="wifi_settings"
-        android:title="@string/wifi_settings"
-        android:summary="@string/wifi_settings_summary" >
-        <intent
-            android:action="android.intent.action.MAIN"
-            android:targetPackage="com.android.settings"
-            android:targetClass="com.android.settings.wifi.WifiSettings" />
-    </PreferenceScreen>
+        android:fragment="com.android.settings.TetherSettings"
+        android:key="tether_settings"
+        android:title="@string/tether_settings_title_all" />
 
     <PreferenceScreen
         android:key="wimax_settings"
@@ -51,55 +44,41 @@
     </PreferenceScreen>
 
     <CheckBoxPreference
-        android:key="toggle_bluetooth"
-        android:title="@string/bluetooth_quick_toggle_title"
-        android:summary="@string/bluetooth_quick_toggle_summary"
-        android:persistent="false" />
-
-    <PreferenceScreen
-        android:key="bt_settings"
-        android:title="@string/bluetooth_settings_title"
-        android:summary="@string/bluetooth_settings_summary">
-        <intent
-            android:action="android.intent.action.MAIN"
-            android:targetPackage="com.android.settings"
-            android:targetClass="com.android.settings.bluetooth.BluetoothSettings" />
-    </PreferenceScreen>
-
-    <PreferenceScreen
-        android:key="tether_settings"
-        android:title="@string/tether_settings_title_both"
-        android:summary="@string/tether_settings_summary_both">
-        <intent
-            android:action="android.intent.action.MAIN"
-            android:targetPackage="com.android.settings"
-            android:targetClass="com.android.settings.TetherSettings" />
-    </PreferenceScreen>
-
-    <PreferenceScreen
-        android:key="vpn_settings"
-        android:title="@string/vpn_settings_title"
-        android:summary="@string/vpn_settings_summary" >
-        <intent
-            android:action="android.intent.action.MAIN"
-            android:targetPackage="com.android.settings"
-            android:targetClass="com.android.settings.vpn.VpnSettings" />
-    </PreferenceScreen>
-
-    <CheckBoxPreference
         android:key="toggle_nfc"
         android:title="@string/nfc_quick_toggle_title"
         android:summary="@string/nfc_quick_toggle_summary"
         android:persistent="false" />
 
     <PreferenceScreen
+        android:fragment="com.android.settings.nfc.AndroidBeam"
+        android:key="android_beam_settings"
+        android:title="@string/android_beam_settings_title" />
+
+    <CheckBoxPreference
+        android:key="toggle_wifi_p2p"
+        android:title="@string/wifi_p2p_settings_title"
+        android:persistent="false" />
+
+    <PreferenceScreen
+        android:fragment="com.android.settings.wifi.p2p.WifiP2pSettings"
+        android:key="wifi_p2p_settings"
+        android:title="@string/wifi_p2p_settings_title"
+        android:summary="@string/wifi_p2p_settings_summary">
+    </PreferenceScreen>
+
+    <PreferenceScreen
+        android:key="mobile_network_settings"
         android:title="@string/network_settings_title"
-        android:summary="@string/network_settings_summary"
         android:dependency="toggle_airplane">
         <intent
             android:action="android.intent.action.MAIN"
             android:targetPackage="com.android.phone"
             android:targetClass="com.android.phone.Settings" />
     </PreferenceScreen>
+
+    <PreferenceScreen
+        android:fragment="com.android.settings.ProxySelector"
+        android:key="proxy_settings"
+        android:title="@string/proxy_settings_title" />
 
 </PreferenceScreen>

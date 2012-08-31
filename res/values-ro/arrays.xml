@@ -29,23 +29,41 @@
     <item msgid="5345178126174698955">"Pacific"</item>
     <item msgid="8392017019801393511">"Toate"</item>
   </string-array>
-  <string-array name="animations_entries">
-    <item msgid="207790005475613429">"Nicio animaţie"</item>
-    <item msgid="6291186755504776720">"Anumite animaţii"</item>
-    <item msgid="3856065399819979491">"Toate animaţiile"</item>
-  </string-array>
-  <string-array name="animations_summaries">
-    <item msgid="4569165952409350897">"Nu sunt afişate animaţii pentru ferestre"</item>
-    <item msgid="4460915688877708508">"Sunt afişate anumite animaţii în fereastră"</item>
-    <item msgid="488968798204105119">"Sunt afişate toate animaţiile pentru ferestre"</item>
-  </string-array>
   <string-array name="screen_timeout_entries">
     <item msgid="3342301044271143016">"15 secunde"</item>
     <item msgid="8881760709354815449">"30 de secunde"</item>
     <item msgid="7589406073232279088">"1 minut"</item>
     <item msgid="7001195990902244174">"2 minute"</item>
-    <item msgid="5721688686241190620">"10 minute"</item>
-    <item msgid="7156442995039264948">"30 de minute"</item>
+    <item msgid="7489864775127957179">"5 minute"</item>
+    <item msgid="2314124409517439288">"10 minute"</item>
+    <item msgid="6864027152847611413">"30 de minute"</item>
+  </string-array>
+  <string-array name="dream_timeout_entries">
+    <item msgid="3149294732238283185">"Niciodată"</item>
+    <item msgid="2194151041885903260">"15 secunde"</item>
+    <item msgid="5892295237131074341">"30 de secunde"</item>
+    <item msgid="3538441365970038213">"1 minut"</item>
+    <item msgid="412343871668955639">"2 minute"</item>
+    <item msgid="5076853889688991690">"5 minute"</item>
+    <item msgid="1903860996174927898">"10 minute"</item>
+    <item msgid="6415509612413178727">"30 de minute"</item>
+  </string-array>
+  <string-array name="lock_after_timeout_entries">
+    <item msgid="8929270399652145290">"Imediat"</item>
+    <item msgid="6736512735606834431">"5 secunde"</item>
+    <item msgid="8044619388267891375">"15 secunde"</item>
+    <item msgid="1822002388249545488">"30 de secunde"</item>
+    <item msgid="8538071621211916519">"1 minut"</item>
+    <item msgid="5663439580228932882">"2 minute"</item>
+    <item msgid="49888496216106852">"5 minute"</item>
+    <item msgid="9002737361305019353">"10 minute"</item>
+    <item msgid="4322676235684793329">"30 de minute"</item>
+  </string-array>
+  <string-array name="entries_font_size">
+    <item msgid="8166647333858618801">"Mică"</item>
+    <item msgid="1932071435506638315">"Normală"</item>
+    <item msgid="38373998008112077">"Mare"</item>
+    <item msgid="7786168277516233536">"Foarte mare"</item>
   </string-array>
   <string-array name="tts_rate_entries">
     <item msgid="6041212618892492920">"Foarte încet"</item>
@@ -60,14 +78,6 @@
     <item msgid="3332408460740717754">"Normală"</item>
     <item msgid="4907380534957572531">"Ridicată"</item>
     <item msgid="4699640516390840297">"Foarte ridicat"</item>
-  </string-array>
-  <string-array name="tts_lang_entries">
-    <item msgid="478030717868306353">"Engleză americană"</item>
-    <item msgid="5192284521396794598">"Engleză britanică"</item>
-    <item msgid="3000262452051711991">"Franceză"</item>
-    <item msgid="9214080387341763401">"Germană"</item>
-    <item msgid="5972100016440094433">"Italiană"</item>
-    <item msgid="5811378076054402537">"Spaniolă"</item>
   </string-array>
   <string-array name="wifi_status">
     <item msgid="1922181315419294640"></item>
@@ -93,22 +103,35 @@
     <item msgid="197508606402264311">"Deconectată"</item>
     <item msgid="8578370891960825148">"Nereuşit"</item>
   </string-array>
-  <string-array name="wifi_security">
-    <item msgid="1435933968767043814">"Deschideţi"</item>
-    <item msgid="6318432659048829665">"WEP"</item>
-    <item msgid="2966395706508338179">"WPA/WPA2 PSK"</item>
-    <item msgid="9098390198768443435">"802.1x EAP"</item>
-  </string-array>
+    <!-- no translation found for wifi_security:0 (8491993170197127709) -->
+    <!-- no translation found for wifi_security:1 (6524315248437318854) -->
+    <!-- no translation found for wifi_security:2 (1532568756571457140) -->
+    <!-- no translation found for wifi_security:3 (3620707702811709779) -->
+    <!-- no translation found for wifi_security_no_eap:0 (2084555984818107151) -->
+    <!-- no translation found for wifi_security_no_eap:1 (397579322683471524) -->
+    <!-- no translation found for wifi_security_no_eap:2 (1968820975358150484) -->
   <string-array name="wifi_eap_method">
     <item msgid="1160193392455075561">"PEAP"</item>
     <item msgid="7981731051382306293">"TLS"</item>
     <item msgid="2892994535305020162">"TTLS"</item>
   </string-array>
+  <string-array name="wifi_p2p_wps_setup">
+    <item msgid="5085064298144493867">"Buton WPS"</item>
+    <item msgid="1624323946324499595">"Codul PIN de la disp. pereche"</item>
+    <item msgid="5366790421523328066">"PIN de la ac. disp."</item>
+  </string-array>
+  <string-array name="wifi_p2p_status">
+    <item msgid="1701505390737218306">"Conectat"</item>
+    <item msgid="3189211552661432651">"Invitat(ă)"</item>
+    <item msgid="3206450250360237549">"Nereuşită"</item>
+    <item msgid="7785896708926971207">"Disponibil"</item>
+    <item msgid="2330782789550628803">"Fără acoperire"</item>
+  </string-array>
   <string-array name="bluetooth_visibility_timeout_entries">
-    <item msgid="1106621950288502195">"2 minute"</item>
-    <item msgid="5780349442819375570">"5 minute"</item>
-    <item msgid="1166466894270177580">"1 oră"</item>
-    <item msgid="9032073376232198148">"Niciodată"</item>
+    <item msgid="8151962652413645395">"2 minute"</item>
+    <item msgid="8675215713017289017">"5 minute"</item>
+    <item msgid="477015974247590543">"1 oră"</item>
+    <item msgid="5198271470953124739">"Fără timp limită"</item>
   </string-array>
   <string-array name="wifi_signal">
     <item msgid="2245412278046491293">"Slab"</item>
@@ -117,14 +140,24 @@
     <item msgid="5702329417707689835">"Excelent"</item>
   </string-array>
   <string-array name="wifi_sleep_policy_entries">
-    <item msgid="3804733751095821976">"La dezactivarea ecranului"</item>
-    <item msgid="1549288661423279207">"Niciodată când este conectat"</item>
-    <item msgid="1986753720941888596">"Niciodată"</item>
+    <item msgid="3269131034472904310">"Întotdeauna"</item>
+    <item msgid="844721238536786870">"Doar atunci când este conectat"</item>
+    <item msgid="2990218920631468642">"Niciodată (măreşte utilizarea datelor)"</item>
+  </string-array>
+  <string-array name="wifi_sleep_policy_entries_wifi_only">
+    <item msgid="2124319326282651391">"Întotdeauna"</item>
+    <item msgid="7433294150916905997">"Doar atunci când este conectat"</item>
+    <item msgid="1390404486722375028">"Niciodată"</item>
+  </string-array>
+  <string-array name="wifi_frequency_band_entries">
+    <item msgid="624340809384223320">"Automat"</item>
+    <item msgid="6670588712989942178">"Numai pe 5 GHz"</item>
+    <item msgid="2715516524973207876">"Numai pe 2,4 GHz"</item>
   </string-array>
   <string-array name="usage_stats_display_order_types">
-    <item msgid="9077371706468756228">"Durată de utilizare"</item>
-    <item msgid="1908750532762193304">"Numărul lansărilor"</item>
-    <item msgid="1213951670006606353">"Nume aplicaţie"</item>
+    <item msgid="2100172576767439288">"Durată de utilizare"</item>
+    <item msgid="3703676222230317933">"Numărul lansărilor"</item>
+    <item msgid="2502754479975776899">"Numele aplicaţiei"</item>
   </string-array>
   <string-array name="wifi_eap_entries">
     <item msgid="8615575908717909498">"PEAP"</item>
@@ -138,6 +171,20 @@
     <item msgid="5923246669412752932">"MSCHAPV2"</item>
     <item msgid="8651992560135239389">"GTC"</item>
   </string-array>
+  <string-array name="wifi_network_setup">
+    <item msgid="3318069057130819160">"Dezactivată"</item>
+    <item msgid="3564693183575724416">"Buton WPS"</item>
+    <item msgid="7468724146672456026">"PIN de la punct de acces"</item>
+    <item msgid="7364462169350112617">"PIN de la acest dispoz."</item>
+  </string-array>
+  <string-array name="wifi_ip_settings">
+    <item msgid="3906714200993111074">"DHCP"</item>
+    <item msgid="628395202971532382">"Static"</item>
+  </string-array>
+  <string-array name="wifi_proxy_settings">
+    <item msgid="4473276491748503377">"Niciunul"</item>
+    <item msgid="8673874894887358090">"Manual"</item>
+  </string-array>
   <string-array name="emergency_tone_entries">
     <item msgid="5165439859689033665">"Dezactivate"</item>
     <item msgid="3165868966179561687">"Alarmă"</item>
@@ -149,18 +196,81 @@
     <item msgid="535934025797984365">"CHAP"</item>
     <item msgid="8383098660619805783">"PAP sau CHAP"</item>
   </string-array>
-    <!-- no translation found for apn_protocol_entries:0 (4852355456199302715) -->
-    <!-- no translation found for apn_protocol_entries:1 (4394161344888484571) -->
-    <!-- no translation found for apn_protocol_entries:2 (8084938354605535381) -->
+  <string-array name="apn_protocol_entries">
+    <item msgid="4852355456199302715">"IPv4"</item>
+    <item msgid="4394161344888484571">"IPv6"</item>
+    <item msgid="8084938354605535381">"IPv4/IPv6"</item>
+  </string-array>
+  <string-array name="bearer_entries">
+    <item msgid="1770285336669531300">"LTE"</item>
+    <item msgid="3044323519470167625">"eHRPD"</item>
+    <item msgid="6848428671997893147">"Nespecificat"</item>
+  </string-array>
   <string-array name="app_install_location_entries">
     <item msgid="8151497958991952759">"Stocare internă pe dispozitiv"</item>
     <item msgid="3738430123799803530">"Card SD detaşabil"</item>
     <item msgid="4498124044785815005">"Permiteţi sistemului să decidă"</item>
   </string-array>
-  <string-array name="vibrate_entries">
-    <item msgid="3388952299521009213">"Întotdeauna"</item>
-    <item msgid="6293147072807231256">"Niciodată"</item>
-    <item msgid="1276641209451816572">"Numai în modul Silenţios"</item>
-    <item msgid="8418930333779132418">"Numai când modul nu este Silenţios"</item>
+  <string-array name="silent_mode_entries">
+    <item msgid="783505504936446770">"Oprit"</item>
+    <item msgid="4804571292609523335">"Vibrare"</item>
+    <item msgid="595707141547423573">"Dezactivaţi sunetul"</item>
+  </string-array>
+  <string-array name="long_press_timeout_selector_titles">
+    <item msgid="3511504869290423954">"Scurtă"</item>
+    <item msgid="2560532955514699713">"Mediu"</item>
+    <item msgid="2372711992605524591">"Lungă"</item>
+  </string-array>
+  <string-array name="hdcp_checking_titles">
+    <item msgid="441827799230089869">"Nu verificaţi niciodată"</item>
+    <item msgid="6042769699089883931">"Verificaţi doar pentru conţinut DRM"</item>
+    <item msgid="9174900380056846820">"Verificaţi întotdeauna"</item>
+  </string-array>
+  <string-array name="hdcp_checking_summaries">
+    <item msgid="505558545611516707">"Nu utilizaţi niciodată verificarea HDCP"</item>
+    <item msgid="3878793616631049349">"Utilizaţi verificarea HDCP numai pentru conţinut DRM"</item>
+    <item msgid="45075631231212732">"Utilizaţi întotdeauna verificarea HDCP"</item>
+  </string-array>
+  <string-array name="window_animation_scale_entries">
+    <item msgid="8134156599370824081">"Animaţie dezactivată"</item>
+    <item msgid="6624864048416710414">"Animaţie la scara 0,5x"</item>
+    <item msgid="2219332261255416635">"Animaţie la scara 1x"</item>
+    <item msgid="3544428804137048509">"Animaţie la scara 1,5x"</item>
+    <item msgid="3110710404225974514">"Animaţie la scara 2x"</item>
+    <item msgid="4402738611528318731">"Animaţie la scara 5x"</item>
+    <item msgid="6189539267968330656">"Animaţie la scara 10x"</item>
+  </string-array>
+  <string-array name="transition_animation_scale_entries">
+    <item msgid="8464255836173039442">"Animaţie dezactivată"</item>
+    <item msgid="3375781541913316411">"Animaţie la scara 0,5x"</item>
+    <item msgid="1991041427801869945">"Animaţie la scara 1x"</item>
+    <item msgid="4012689927622382874">"Animaţie la scara 1,5x"</item>
+    <item msgid="3289156759925947169">"Animaţie la scara 2x"</item>
+    <item msgid="7705857441213621835">"Animaţie la scara 5x"</item>
+    <item msgid="6660750935954853365">"Animaţie la scara 10x"</item>
+  </string-array>
+  <string-array name="app_process_limit_entries">
+    <item msgid="3401625457385943795">"Limita standard"</item>
+    <item msgid="4071574792028999443">"Nu există procese de fundal"</item>
+    <item msgid="4810006996171705398">"Cel mult 1 proces"</item>
+    <item msgid="8586370216857360863">"Cel mult 2 procese"</item>
+    <item msgid="836593137872605381">"Cel mult 3 procese"</item>
+    <item msgid="7899496259191969307">"Cel mult 4 procese"</item>
+  </string-array>
+  <string-array name="vpn_types_long">
+    <item msgid="2732002039459078847">"PPTP VPN"</item>
+    <item msgid="3799752201662127867">"L2TP/IPSec VPN cu chei predistribuite"</item>
+    <item msgid="4725504331295252103">"L2TP/IPSec VPN cu certificate"</item>
+    <item msgid="7526551163264034377">"IPSec VPN cu chei predistribuite şi autentificare Xauth"</item>
+    <item msgid="8064740940687465039">"IPSec VPN cu certificate şi autentificare Xauth"</item>
+    <item msgid="4946199982372391490">"IPSec VPN cu certificate şi autentificare hibridă"</item>
+  </string-array>
+  <string-array name="vpn_states">
+    <item msgid="8621078286418985762">"Deconectată"</item>
+    <item msgid="6692305604213080515">"Se iniţializează..."</item>
+    <item msgid="8001704909356800092">"Se conectează..."</item>
+    <item msgid="4039737283841672166">"Conectată"</item>
+    <item msgid="4042143101664725090">"Timp limită"</item>
+    <item msgid="7664124146786465092">"Nereuşită"</item>
   </string-array>
 </resources>

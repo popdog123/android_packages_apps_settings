@@ -27,6 +27,7 @@ import android.net.NetworkInfo;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -46,6 +47,7 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.PhoneStateIntentReceiver;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.settings.R;
+import com.android.settings.Utils;
 
 import java.lang.ref.WeakReference;
 
@@ -65,9 +67,42 @@ import java.lang.ref.WeakReference;
  */
 public class Status extends PreferenceActivity {
 
-    private static final String KEY_WIMAX_MAC_ADDRESS = "wimax_mac_address";
+    private static final String KEY_DATA_STATE = "data_state";
+    private static final String KEY_SERVICE_STATE = "service_state";
+    private static final String KEY_OPERATOR_NAME = "operator_name";
+    private static final String KEY_ROAMING_STATE = "roaming_state";
+    private static final String KEY_NETWORK_TYPE = "network_type";
+    private static final String KEY_PHONE_NUMBER = "number";
+    private static final String KEY_IMEI_SV = "imei_sv";
+    private static final String KEY_IMEI = "imei";
+    private static final String KEY_PRL_VERSION = "prl_version";
+    private static final String KEY_MIN_NUMBER = "min_number";
+    private static final String KEY_MEID_NUMBER = "meid_number";
+    private static final String KEY_SIGNAL_STRENGTH = "signal_strength";
+    private static final String KEY_BATTERY_STATUS = "battery_status";
+    private static final String KEY_BATTERY_LEVEL = "battery_level";
+    private static final String KEY_IP_ADDRESS = "wifi_ip_address";
     private static final String KEY_WIFI_MAC_ADDRESS = "wifi_mac_address";
     private static final String KEY_BT_ADDRESS = "bt_address";
+    private static final String KEY_SERIAL_NUMBER = "serial_number";
+    private static final String KEY_ICC_ID = "icc_id";
+    private static final String KEY_WIMAX_MAC_ADDRESS = "wimax_mac_address";
+    private static final String[] PHONE_RELATED_ENTRIES = {
+        KEY_DATA_STATE,
+        KEY_SERVICE_STATE,
+        KEY_OPERATOR_NAME,
+        KEY_ROAMING_STATE,
+        KEY_NETWORK_TYPE,
+        KEY_PHONE_NUMBER,
+        KEY_IMEI,
+        KEY_IMEI_SV,
+        KEY_PRL_VERSION,
+        KEY_MIN_NUMBER,
+        KEY_MEID_NUMBER,
+        KEY_SIGNAL_STRENGTH,
+        KEY_ICC_ID
+    };
+
     private static final int EVENT_SIGNAL_STRENGTH_CHANGED = 200;
     private static final int EVENT_SERVICE_STATE_CHANGED = 300;
 
@@ -81,7 +116,7 @@ public class Status extends PreferenceActivity {
     private Preference mUptime;
 
     private static String sUnknown;
-    
+
     private Preference mBatteryStatus;
     private Preference mBatteryLevel;
 
@@ -120,38 +155,13 @@ public class Status extends PreferenceActivity {
     }
 
     private BroadcastReceiver mBatteryInfoReceiver = new BroadcastReceiver() {
-        
+
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
             if (Intent.ACTION_BATTERY_CHANGED.equals(action)) {
-
-                int level = intent.getIntExtra("level", 0);
-                int scale = intent.getIntExtra("scale", 100);
-                
-                mBatteryLevel.setSummary(String.valueOf(level * 100 / scale) + "%");
-                
-                int plugType = intent.getIntExtra("plugged", 0);
-                int status = intent.getIntExtra("status", BatteryManager.BATTERY_STATUS_UNKNOWN);
-                String statusString;
-                if (status == BatteryManager.BATTERY_STATUS_CHARGING) {
-                    statusString = getString(R.string.battery_info_status_charging);
-                    if (plugType > 0) {
-                        statusString = statusString + " " + getString(
-                                (plugType == BatteryManager.BATTERY_PLUGGED_AC)
-                                        ? R.string.battery_info_status_charging_ac
-                                        : R.string.battery_info_status_charging_usb);
-                    }
-                } else if (status == BatteryManager.BATTERY_STATUS_DISCHARGING) {
-                    statusString = getString(R.string.battery_info_status_discharging);
-                } else if (status == BatteryManager.BATTERY_STATUS_NOT_CHARGING) {
-                    statusString = getString(R.string.battery_info_status_not_charging);
-                } else if (status == BatteryManager.BATTERY_STATUS_FULL) {
-                    statusString = getString(R.string.battery_info_status_full);
-                } else {
-                    statusString = getString(R.string.battery_info_status_unknown);
-                }
-                mBatteryStatus.setSummary(statusString);
+                mBatteryLevel.setSummary(Utils.getBatteryPercentage(intent));
+                mBatteryStatus.setSummary(Utils.getBatteryStatus(getResources(), intent));
             }
         }
     };
@@ -163,114 +173,136 @@ public class Status extends PreferenceActivity {
             updateNetworkType();
         }
     };
-    
+
     @Override
     protected void onCreate(Bundle icicle) {
         super.onCreate(icicle);
         Preference removablePref;
 
         mHandler = new MyHandler(this);
-        
+
         mTelephonyManager = (TelephonyManager)getSystemService(TELEPHONY_SERVICE);
 
         addPreferencesFromResource(R.xml.device_info_status);
-        mBatteryLevel = findPreference("battery_level");
-        mBatteryStatus = findPreference("battery_status");
-        
+        mBatteryLevel = findPreference(KEY_BATTERY_LEVEL);
+        mBatteryStatus = findPreference(KEY_BATTERY_STATUS);
+
         mRes = getResources();
         if (sUnknown == null) {
             sUnknown = mRes.getString(R.string.device_info_default);
         }
-        
+
         mPhone = PhoneFactory.getDefaultPhone();
         // Note - missing in zaku build, be careful later...
-        mSignalStrength = findPreference("signal_strength");			
+        mSignalStrength = findPreference(KEY_SIGNAL_STRENGTH);
         mUptime = findPreference("up_time");
-        
-        //NOTE "imei" is the "Device ID" since it represents the IMEI in GSM and the MEID in CDMA
-        if (mPhone.getPhoneName().equals("CDMA")) {
-            setSummaryText("meid_number", mPhone.getMeid());
-            setSummaryText("min_number", mPhone.getCdmaMin());
-            if (getResources().getBoolean(R.bool.config_msid_enable)) {
-                findPreference("min_number").setTitle(R.string.status_msid_number);
-            }
-            setSummaryText("prl_version", mPhone.getCdmaPrlVersion());
 
-            // device is not GSM/UMTS, do not display GSM/UMTS features
-            // check Null in case no specified preference in overlay xml
-            removablePref = findPreference("imei");
-            if (removablePref != null) {
-                getPreferenceScreen().removePreference(removablePref);
-            }
-            removablePref = findPreference("imei_sv");
-            if (removablePref != null) {
-                getPreferenceScreen().removePreference(removablePref);
+        if (Utils.isWifiOnly(getApplicationContext())) {
+            for (String key : PHONE_RELATED_ENTRIES) {
+                removePreferenceFromScreen(key);
             }
         } else {
-            setSummaryText("imei", mPhone.getDeviceId());
+            // NOTE "imei" is the "Device ID" since it represents
+            //  the IMEI in GSM and the MEID in CDMA
+            if (mPhone.getPhoneName().equals("CDMA")) {
+                setSummaryText(KEY_MEID_NUMBER, mPhone.getMeid());
+                setSummaryText(KEY_MIN_NUMBER, mPhone.getCdmaMin());
+                if (getResources().getBoolean(R.bool.config_msid_enable)) {
+                    findPreference(KEY_MIN_NUMBER).setTitle(R.string.status_msid_number);
+                }
+                setSummaryText(KEY_PRL_VERSION, mPhone.getCdmaPrlVersion());
+                removePreferenceFromScreen(KEY_IMEI_SV);
 
-            setSummaryText("imei_sv",
-                    ((TelephonyManager) getSystemService(TELEPHONY_SERVICE))
-                        .getDeviceSoftwareVersion());
+                if (mPhone.getLteOnCdmaMode() == Phone.LTE_ON_CDMA_TRUE) {
+                    // Show ICC ID and IMEI for LTE device
+                    setSummaryText(KEY_ICC_ID, mPhone.getIccSerialNumber());
+                    setSummaryText(KEY_IMEI, mPhone.getImei());
+                } else {
+                    // device is not GSM/UMTS, do not display GSM/UMTS features
+                    // check Null in case no specified preference in overlay xml
+                    removePreferenceFromScreen(KEY_IMEI);
+                    removePreferenceFromScreen(KEY_ICC_ID);
+                }
+            } else {
+                setSummaryText(KEY_IMEI, mPhone.getDeviceId());
 
-            // device is not CDMA, do not display CDMA features
-            // check Null in case no specified preference in overlay xml
-            removablePref = findPreference("prl_version");
-            if (removablePref != null) {
-                getPreferenceScreen().removePreference(removablePref);
+                setSummaryText(KEY_IMEI_SV,
+                        ((TelephonyManager) getSystemService(TELEPHONY_SERVICE))
+                            .getDeviceSoftwareVersion());
+
+                // device is not CDMA, do not display CDMA features
+                // check Null in case no specified preference in overlay xml
+                removePreferenceFromScreen(KEY_PRL_VERSION);
+                removePreferenceFromScreen(KEY_MEID_NUMBER);
+                removePreferenceFromScreen(KEY_MIN_NUMBER);
+                removePreferenceFromScreen(KEY_ICC_ID);
             }
-            removablePref = findPreference("meid_number");
-            if (removablePref != null) {
-                getPreferenceScreen().removePreference(removablePref);
+
+            String rawNumber = mPhone.getLine1Number();  // may be null or empty
+            String formattedNumber = null;
+            if (!TextUtils.isEmpty(rawNumber)) {
+                formattedNumber = PhoneNumberUtils.formatNumber(rawNumber);
             }
-            removablePref = findPreference("min_number");
-            if (removablePref != null) {
-                getPreferenceScreen().removePreference(removablePref);
-            }
+            // If formattedNumber is null or empty, it'll display as "Unknown".
+            setSummaryText(KEY_PHONE_NUMBER, formattedNumber);
+
+            mPhoneStateReceiver = new PhoneStateIntentReceiver(this, mHandler);
+            mPhoneStateReceiver.notifySignalStrength(EVENT_SIGNAL_STRENGTH_CHANGED);
+            mPhoneStateReceiver.notifyServiceState(EVENT_SERVICE_STATE_CHANGED);
         }
-
-        String rawNumber = mPhone.getLine1Number();  // may be null or empty
-        String formattedNumber = null;
-        if (!TextUtils.isEmpty(rawNumber)) {
-            formattedNumber = PhoneNumberUtils.formatNumber(rawNumber);
-        }
-        // If formattedNumber is null or empty, it'll display as "Unknown".
-        setSummaryText("number", formattedNumber);
-
-        mPhoneStateReceiver = new PhoneStateIntentReceiver(this, mHandler);
-        mPhoneStateReceiver.notifySignalStrength(EVENT_SIGNAL_STRENGTH_CHANGED);
-        mPhoneStateReceiver.notifyServiceState(EVENT_SERVICE_STATE_CHANGED);
 
         setWimaxStatus();
         setWifiStatus();
         setBtStatus();
+        setIpAddressStatus();
+
+        String serial = Build.SERIAL;
+        if (serial != null && !serial.equals("")) {
+            setSummaryText(KEY_SERIAL_NUMBER, serial);
+        } else {
+            removePreferenceFromScreen(KEY_SERIAL_NUMBER);
+        }
     }
-    
+
     @Override
     protected void onResume() {
         super.onResume();
 
-        mPhoneStateReceiver.registerIntent();
+        if (!Utils.isWifiOnly(getApplicationContext())) {
+            mPhoneStateReceiver.registerIntent();
+
+            updateSignalStrength();
+            updateServiceState(mPhone.getServiceState());
+            updateDataState();
+
+            mTelephonyManager.listen(mPhoneStateListener,
+                      PhoneStateListener.LISTEN_DATA_CONNECTION_STATE);
+        }
         registerReceiver(mBatteryInfoReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-
-        updateSignalStrength();
-        updateServiceState(mPhone.getServiceState());
-        updateDataState();
-        
-        mTelephonyManager.listen(mPhoneStateListener,
-                  PhoneStateListener.LISTEN_DATA_CONNECTION_STATE);
-
         mHandler.sendEmptyMessage(EVENT_UPDATE_STATS);
     }
-    
+
     @Override
     public void onPause() {
         super.onPause();
 
-        mPhoneStateReceiver.unregisterIntent();
-        mTelephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_NONE);
+        if (!Utils.isWifiOnly(getApplicationContext())) {
+            mPhoneStateReceiver.unregisterIntent();
+            mTelephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_NONE);
+        }
         unregisterReceiver(mBatteryInfoReceiver);
         mHandler.removeMessages(EVENT_UPDATE_STATS);
+    }
+
+    /**
+     * Removes the specified preference, if it exists.
+     * @param key the key for the Preference item
+     */
+    private void removePreferenceFromScreen(String key) {
+        Preference pref = findPreference(key);
+        if (pref != null) {
+            getPreferenceScreen().removePreference(pref);
+        }
     }
 
     /**
@@ -283,7 +315,7 @@ public class Status extends PreferenceActivity {
             findPreference(preference).setSummary(
                     SystemProperties.get(property, alt));
         } catch (RuntimeException e) {
-            
+
         }
     }
 
@@ -296,12 +328,12 @@ public class Status extends PreferenceActivity {
                  findPreference(preference).setSummary(text);
              }
     }
-    
+
     private void updateNetworkType() {
         // Whether EDGE, UMTS, etc...
-        setSummary("network_type", TelephonyProperties.PROPERTY_DATA_NETWORK_TYPE, sUnknown);
+        setSummary(KEY_NETWORK_TYPE, TelephonyProperties.PROPERTY_DATA_NETWORK_TYPE, sUnknown);
     }
-    
+
     private void updateDataState() {
         int state = mTelephonyManager.getDataState();
         String display = mRes.getString(R.string.radioInfo_unknown);
@@ -320,14 +352,14 @@ public class Status extends PreferenceActivity {
                 display = mRes.getString(R.string.radioInfo_data_disconnected);
                 break;
         }
-        
-        setSummaryText("data_state", display);
+
+        setSummaryText(KEY_DATA_STATE, display);
     }
 
     private void updateServiceState(ServiceState serviceState) {
         int state = serviceState.getState();
         String display = mRes.getString(R.string.radioInfo_unknown);
-        
+
         switch (state) {
             case ServiceState.STATE_IN_SERVICE:
                 display = mRes.getString(R.string.radioInfo_service_in);
@@ -340,17 +372,17 @@ public class Status extends PreferenceActivity {
                 display = mRes.getString(R.string.radioInfo_service_off);
                 break;
         }
-        
-        setSummaryText("service_state", display);
-        
+
+        setSummaryText(KEY_SERVICE_STATE, display);
+
         if (serviceState.getRoaming()) {
-            setSummaryText("roaming_state", mRes.getString(R.string.radioInfo_roaming_in));
+            setSummaryText(KEY_ROAMING_STATE, mRes.getString(R.string.radioInfo_roaming_in));
         } else {
-            setSummaryText("roaming_state", mRes.getString(R.string.radioInfo_roaming_not));
+            setSummaryText(KEY_ROAMING_STATE, mRes.getString(R.string.radioInfo_roaming_not));
         }
-        setSummaryText("operator_name", serviceState.getOperatorAlphaLong());
+        setSummaryText(KEY_OPERATOR_NAME, serviceState.getOperatorAlphaLong());
     }
-    
+
     void updateSignalStrength() {
         // TODO PhoneStateIntentReceiver is deprecated and PhoneStateListener
         // should probably used instead.
@@ -370,7 +402,7 @@ public class Status extends PreferenceActivity {
 
             if (-1 == signalDbm) signalDbm = 0;
 
-            int signalAsu = mPhoneStateReceiver.getSignalStrength();
+            int signalAsu = mPhoneStateReceiver.getSignalStrengthLevelAsu();
 
             if (-1 == signalAsu) signalAsu = 0;
 
@@ -388,8 +420,7 @@ public class Status extends PreferenceActivity {
         if (ni == null) {
             PreferenceScreen root = getPreferenceScreen();
             Preference ps = (Preference) findPreference(KEY_WIMAX_MAC_ADDRESS);
-            if (ps != null)
-                root.removePreference(ps);
+            if (ps != null) root.removePreference(ps);
         } else {
             Preference wimaxMacAddressPref = findPreference(KEY_WIMAX_MAC_ADDRESS);
             String macAddress = SystemProperties.get("net.wimax.mac.address",
@@ -397,15 +428,25 @@ public class Status extends PreferenceActivity {
             wimaxMacAddressPref.setSummary(macAddress);
         }
     }
-
     private void setWifiStatus() {
         WifiManager wifiManager = (WifiManager) getSystemService(WIFI_SERVICE);
         WifiInfo wifiInfo = wifiManager.getConnectionInfo();
 
         Preference wifiMacAddressPref = findPreference(KEY_WIFI_MAC_ADDRESS);
+
         String macAddress = wifiInfo == null ? null : wifiInfo.getMacAddress();
-        wifiMacAddressPref.setSummary(!TextUtils.isEmpty(macAddress) ? macAddress 
+        wifiMacAddressPref.setSummary(!TextUtils.isEmpty(macAddress) ? macAddress
                 : getString(R.string.status_unavailable));
+    }
+
+    private void setIpAddressStatus() {
+        Preference ipAddressPref = findPreference(KEY_IP_ADDRESS);
+        String ipAddress = Utils.getDefaultIpAddresses(this);
+        if (ipAddress != null) {
+            ipAddressPref.setSummary(ipAddress);
+        } else {
+            ipAddressPref.setSummary(getString(R.string.status_unavailable));
+        }
     }
 
     private void setBtStatus() {
@@ -432,7 +473,7 @@ public class Status extends PreferenceActivity {
 
         mUptime.setSummary(convert(ut));
     }
-    
+
     private String pad(int n) {
         if (n >= 10) {
             return String.valueOf(n);

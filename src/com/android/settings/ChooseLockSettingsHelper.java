@@ -16,19 +16,29 @@
 
 package com.android.settings;
 
+import com.android.internal.widget.LockPatternUtils;
+
 import android.app.Activity;
+import android.app.Fragment;
 import android.app.admin.DevicePolicyManager;
 import android.content.Intent;
 
-import com.android.internal.widget.LockPatternUtils;
+public final class ChooseLockSettingsHelper {
 
-public class ChooseLockSettingsHelper {
+    static final String EXTRA_KEY_PASSWORD = "password";
+
     private LockPatternUtils mLockPatternUtils;
     private Activity mActivity;
+    private Fragment mFragment;
 
     public ChooseLockSettingsHelper(Activity activity) {
         mActivity = activity;
         mLockPatternUtils = new LockPatternUtils(activity);
+    }
+
+    public ChooseLockSettingsHelper(Activity activity, Fragment fragment) {
+        this(activity);
+        mFragment = fragment;
     }
 
     public LockPatternUtils utils() {
@@ -42,8 +52,7 @@ public class ChooseLockSettingsHelper {
      * @return true if one exists and we launched an activity to confirm it
      * @see #onActivityResult(int, int, android.content.Intent)
      */
-    protected boolean launchConfirmationActivity(int request,
-            CharSequence message, CharSequence details) {
+    boolean launchConfirmationActivity(int request, CharSequence message, CharSequence details) {
         boolean launched = false;
         switch (mLockPatternUtils.getKeyguardStoredPasswordQuality()) {
             case DevicePolicyManager.PASSWORD_QUALITY_SOMETHING:
@@ -52,6 +61,7 @@ public class ChooseLockSettingsHelper {
             case DevicePolicyManager.PASSWORD_QUALITY_NUMERIC:
             case DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC:
             case DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC:
+            case DevicePolicyManager.PASSWORD_QUALITY_COMPLEX:
                 // TODO: update UI layout for ConfirmPassword to show message and details
                 launched = confirmPassword(request);
                 break;
@@ -75,7 +85,11 @@ public class ChooseLockSettingsHelper {
         intent.putExtra(ConfirmLockPattern.HEADER_TEXT, message);
         intent.putExtra(ConfirmLockPattern.FOOTER_TEXT, details);
         intent.setClassName("com.android.settings", "com.android.settings.ConfirmLockPattern");
-        mActivity.startActivityForResult(intent, request);
+        if (mFragment != null) {
+            mFragment.startActivityForResult(intent, request);
+        } else {
+            mActivity.startActivityForResult(intent, request);
+        }
         return true;
     }
 
@@ -88,7 +102,11 @@ public class ChooseLockSettingsHelper {
         if (!mLockPatternUtils.isLockPasswordEnabled()) return false;
         final Intent intent = new Intent();
         intent.setClassName("com.android.settings", "com.android.settings.ConfirmLockPassword");
-        mActivity.startActivityForResult(intent, request);
+        if (mFragment != null) {
+            mFragment.startActivityForResult(intent, request);
+        } else {
+            mActivity.startActivityForResult(intent, request);
+        }
         return true;
     }
 

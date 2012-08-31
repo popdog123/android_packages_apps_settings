@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,48 +16,37 @@
 
 package com.android.settings.bluetooth;
 
-import com.android.settings.R;
-
 import android.bluetooth.BluetoothA2dp;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHeadset;
+import android.bluetooth.BluetoothInputDevice;
+import android.bluetooth.BluetoothPan;
+import android.bluetooth.BluetoothProfile;
 import android.bluetooth.BluetoothUuid;
-import android.os.Handler;
+import android.content.Context;
+import android.content.Intent;
 import android.os.ParcelUuid;
 import android.util.Log;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
- * LocalBluetoothProfileManager is an abstract class defining the basic
- * functionality related to a profile.
+ * LocalBluetoothProfileManager provides access to the LocalBluetoothProfile
+ * objects for the available Bluetooth profiles.
  */
-public abstract class LocalBluetoothProfileManager {
+final class LocalBluetoothProfileManager {
     private static final String TAG = "LocalBluetoothProfileManager";
 
-    /* package */ static final ParcelUuid[] HEADSET_PROFILE_UUIDS = new ParcelUuid[] {
-        BluetoothUuid.HSP,
-        BluetoothUuid.Handsfree,
-    };
-
-    /* package */ static final ParcelUuid[] A2DP_PROFILE_UUIDS = new ParcelUuid[] {
-        BluetoothUuid.AudioSink,
-        BluetoothUuid.AdvAudioDist,
-    };
-
-    /* package */ static final ParcelUuid[] OPP_PROFILE_UUIDS = new ParcelUuid[] {
-        BluetoothUuid.ObexObjectPush
-    };
+    /** Singleton instance. */
+    private static LocalBluetoothProfileManager sInstance;
 
     /**
      * An interface for notifying BluetoothHeadset IPC clients when they have
      * been connected to the BluetoothHeadset service.
+     * Only used by {@link DockService}.
      */
     public interface ServiceListener {
         /**
@@ -66,7 +55,7 @@ public abstract class LocalBluetoothProfileManager {
          * this callback before making IPC calls on the BluetoothHeadset
          * service.
          */
-        public void onServiceConnected();
+        void onServiceConnected();
 
         /**
          * Called to notify the client that this proxy object has been
@@ -75,494 +64,282 @@ public abstract class LocalBluetoothProfileManager {
          * This callback will currently only occur if the application hosting
          * the BluetoothHeadset service, but may be called more often in future.
          */
-        public void onServiceDisconnected();
+        void onServiceDisconnected();
     }
 
-    // TODO: close profiles when we're shutting down
-    private static Map<Profile, LocalBluetoothProfileManager> sProfileMap =
-            new HashMap<Profile, LocalBluetoothProfileManager>();
+    private final Context mContext;
+    private final LocalBluetoothAdapter mLocalAdapter;
+    private final CachedBluetoothDeviceManager mDeviceManager;
+    private final BluetoothEventManager mEventManager;
 
-    protected LocalBluetoothManager mLocalManager;
+    private A2dpProfile mA2dpProfile;
+    private HeadsetProfile mHeadsetProfile;
+    private final HidProfile mHidProfile;
+    private OppProfile mOppProfile;
+    private final PanProfile mPanProfile;
 
-    public static void init(LocalBluetoothManager localManager) {
-        synchronized (sProfileMap) {
-            if (sProfileMap.size() == 0) {
-                LocalBluetoothProfileManager profileManager;
+    /**
+     * Mapping from profile name, e.g. "HEADSET" to profile object.
+     */
+    private final Map<String, LocalBluetoothProfile>
+            mProfileNameMap = new HashMap<String, LocalBluetoothProfile>();
 
-                profileManager = new A2dpProfileManager(localManager);
-                sProfileMap.put(Profile.A2DP, profileManager);
+    LocalBluetoothProfileManager(Context context,
+            LocalBluetoothAdapter adapter,
+            CachedBluetoothDeviceManager deviceManager,
+            BluetoothEventManager eventManager) {
+        mContext = context;
 
-                profileManager = new HeadsetProfileManager(localManager);
-                sProfileMap.put(Profile.HEADSET, profileManager);
+        mLocalAdapter = adapter;
+        mDeviceManager = deviceManager;
+        mEventManager = eventManager;
+        // pass this reference to adapter and event manager (circular dependency)
+        mLocalAdapter.setProfileManager(this);
+        mEventManager.setProfileManager(this);
 
-                profileManager = new OppProfileManager(localManager);
-                sProfileMap.put(Profile.OPP, profileManager);
-            }
+        ParcelUuid[] uuids = adapter.getUuids();
+
+        // uuids may be null if Bluetooth is turned off
+        if (uuids != null) {
+            updateLocalProfiles(uuids);
         }
-    }
 
-    private static LinkedList<ServiceListener> mServiceListeners = new LinkedList<ServiceListener>();
+        // Always add HID and PAN profiles
+        mHidProfile = new HidProfile(context, mLocalAdapter);
+        addProfile(mHidProfile, HidProfile.NAME,
+                BluetoothInputDevice.ACTION_CONNECTION_STATE_CHANGED);
 
-    public static void addServiceListener(ServiceListener l) {
-        mServiceListeners.add(l);
-    }
+        mPanProfile = new PanProfile(context);
+        addPanProfile(mPanProfile, PanProfile.NAME,
+                BluetoothPan.ACTION_CONNECTION_STATE_CHANGED);
 
-    public static void removeServiceListener(ServiceListener l) {
-        mServiceListeners.remove(l);
-    }
-
-    public static boolean isManagerReady() {
-        // Getting just the headset profile is fine for now. Will need to deal with A2DP
-        // and others if they aren't always in a ready state.
-        LocalBluetoothProfileManager profileManager = sProfileMap.get(Profile.HEADSET);
-        if (profileManager == null) {
-            return sProfileMap.size() > 0;
-        }
-        return profileManager.isProfileReady();
-    }
-
-    public static LocalBluetoothProfileManager getProfileManager(LocalBluetoothManager localManager,
-            Profile profile) {
-        // Note: This code assumes that "localManager" is same as the
-        // LocalBluetoothManager that was used to initialize the sProfileMap.
-        // If that every changes, we can't just keep one copy of sProfileMap.
-        synchronized (sProfileMap) {
-            LocalBluetoothProfileManager profileManager = sProfileMap.get(profile);
-            if (profileManager == null) {
-                Log.e(TAG, "profileManager can't be found for " + profile.toString());
-            }
-            return profileManager;
-        }
+        Log.d(TAG, "LocalBluetoothProfileManager construction complete");
     }
 
     /**
-     * Temporary method to fill profiles based on a device's class.
-     *
-     * NOTE: This list happens to define the connection order. We should put this logic in a more
-     * well known place when this method is no longer temporary.
-     * @param uuids of the remote device
-     * @param profiles The list of profiles to fill
+     * Initialize or update the local profile objects. If a UUID was previously
+     * present but has been removed, we print a warning but don't remove the
+     * profile object as it might be referenced elsewhere, or the UUID might
+     * come back and we don't want multiple copies of the profile objects.
+     * @param uuids
      */
-    public static void updateProfiles(ParcelUuid[] uuids, List<Profile> profiles) {
+    void updateLocalProfiles(ParcelUuid[] uuids) {
+        // A2DP
+        if (BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.AudioSource)) {
+            if (mA2dpProfile == null) {
+                Log.d(TAG, "Adding local A2DP profile");
+                mA2dpProfile = new A2dpProfile(mContext);
+                addProfile(mA2dpProfile, A2dpProfile.NAME,
+                        BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED);
+            }
+        } else if (mA2dpProfile != null) {
+            Log.w(TAG, "Warning: A2DP profile was previously added but the UUID is now missing.");
+        }
+
+        // Headset / Handsfree
+        if (BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.Handsfree_AG) ||
+            BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.HSP_AG)) {
+            if (mHeadsetProfile == null) {
+                Log.d(TAG, "Adding local HEADSET profile");
+                mHeadsetProfile = new HeadsetProfile(mContext, mLocalAdapter,
+                        mDeviceManager, this);
+                addProfile(mHeadsetProfile, HeadsetProfile.NAME,
+                        BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED);
+            }
+        } else if (mHeadsetProfile != null) {
+            Log.w(TAG, "Warning: HEADSET profile was previously added but the UUID is now missing.");
+        }
+
+        // OPP
+        if (BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.ObexObjectPush)) {
+            if (mOppProfile == null) {
+                Log.d(TAG, "Adding local OPP profile");
+                mOppProfile = new OppProfile();
+                // Note: no event handler for OPP, only name map.
+                mProfileNameMap.put(OppProfile.NAME, mOppProfile);
+            }
+        } else if (mOppProfile != null) {
+            Log.w(TAG, "Warning: OPP profile was previously added but the UUID is now missing.");
+        }
+        mEventManager.registerProfileIntentReceiver();
+
+        // There is no local SDP record for HID and Settings app doesn't control PBAP
+    }
+
+    private final Collection<ServiceListener> mServiceListeners =
+            new ArrayList<ServiceListener>();
+
+    private void addProfile(LocalBluetoothProfile profile,
+            String profileName, String stateChangedAction) {
+        mEventManager.addProfileHandler(stateChangedAction, new StateChangedHandler(profile));
+        mProfileNameMap.put(profileName, profile);
+    }
+
+    private void addPanProfile(LocalBluetoothProfile profile,
+            String profileName, String stateChangedAction) {
+        mEventManager.addProfileHandler(stateChangedAction,
+                new PanStateChangedHandler(profile));
+        mProfileNameMap.put(profileName, profile);
+    }
+
+    LocalBluetoothProfile getProfileByName(String name) {
+        return mProfileNameMap.get(name);
+    }
+
+    // Called from LocalBluetoothAdapter when state changes to ON
+    void setBluetoothStateOn() {
+        ParcelUuid[] uuids = mLocalAdapter.getUuids();
+        if (uuids != null) {
+            updateLocalProfiles(uuids);
+        }
+        mEventManager.readPairedDevices();
+    }
+
+    /**
+     * Generic handler for connection state change events for the specified profile.
+     */
+    private class StateChangedHandler implements BluetoothEventManager.Handler {
+        final LocalBluetoothProfile mProfile;
+
+        StateChangedHandler(LocalBluetoothProfile profile) {
+            mProfile = profile;
+        }
+
+        public void onReceive(Context context, Intent intent, BluetoothDevice device) {
+            CachedBluetoothDevice cachedDevice = mDeviceManager.findDevice(device);
+            if (cachedDevice == null) {
+                Log.w(TAG, "StateChangedHandler found new device: " + device);
+                cachedDevice = mDeviceManager.addDevice(mLocalAdapter,
+                        LocalBluetoothProfileManager.this, device);
+            }
+            int newState = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, 0);
+            int oldState = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, 0);
+            if (newState == BluetoothProfile.STATE_DISCONNECTED &&
+                    oldState == BluetoothProfile.STATE_CONNECTING) {
+                Log.i(TAG, "Failed to connect " + mProfile + " device");
+            }
+
+            cachedDevice.onProfileStateChanged(mProfile, newState);
+            cachedDevice.refresh();
+        }
+    }
+
+    /** State change handler for NAP and PANU profiles. */
+    private class PanStateChangedHandler extends StateChangedHandler {
+
+        PanStateChangedHandler(LocalBluetoothProfile profile) {
+            super(profile);
+        }
+
+        @Override
+        public void onReceive(Context context, Intent intent, BluetoothDevice device) {
+            PanProfile panProfile = (PanProfile) mProfile;
+            int role = intent.getIntExtra(BluetoothPan.EXTRA_LOCAL_ROLE, 0);
+            panProfile.setLocalRole(device, role);
+            super.onReceive(context, intent, device);
+        }
+    }
+
+    // called from DockService
+    void addServiceListener(ServiceListener l) {
+        mServiceListeners.add(l);
+    }
+
+    // called from DockService
+    void removeServiceListener(ServiceListener l) {
+        mServiceListeners.remove(l);
+    }
+
+    // not synchronized: use only from UI thread! (TODO: verify)
+    void callServiceConnectedListeners() {
+        for (ServiceListener l : mServiceListeners) {
+            l.onServiceConnected();
+        }
+    }
+
+    // not synchronized: use only from UI thread! (TODO: verify)
+    void callServiceDisconnectedListeners() {
+        for (ServiceListener listener : mServiceListeners) {
+            listener.onServiceDisconnected();
+        }
+    }
+
+    // This is called by DockService, so check Headset and A2DP.
+    public synchronized boolean isManagerReady() {
+        // Getting just the headset profile is fine for now. Will need to deal with A2DP
+        // and others if they aren't always in a ready state.
+        LocalBluetoothProfile profile = mHeadsetProfile;
+        if (profile != null) {
+            return profile.isProfileReady();
+        }
+        profile = mA2dpProfile;
+        if (profile != null) {
+            return profile.isProfileReady();
+        }
+        return false;
+    }
+
+    A2dpProfile getA2dpProfile() {
+        return mA2dpProfile;
+    }
+
+    HeadsetProfile getHeadsetProfile() {
+        return mHeadsetProfile;
+    }
+
+    /**
+     * Fill in a list of LocalBluetoothProfile objects that are supported by
+     * the local device and the remote device.
+     *
+     * @param uuids of the remote device
+     * @param localUuids UUIDs of the local device
+     * @param profiles The list of profiles to fill
+     * @param removedProfiles list of profiles that were removed
+     */
+    synchronized void updateProfiles(ParcelUuid[] uuids, ParcelUuid[] localUuids,
+            Collection<LocalBluetoothProfile> profiles,
+            Collection<LocalBluetoothProfile> removedProfiles) {
+        // Copy previous profile list into removedProfiles
+        removedProfiles.clear();
+        removedProfiles.addAll(profiles);
         profiles.clear();
 
         if (uuids == null) {
             return;
         }
 
-        if (BluetoothUuid.containsAnyUuid(uuids, HEADSET_PROFILE_UUIDS)) {
-            profiles.add(Profile.HEADSET);
-        }
-
-        if (BluetoothUuid.containsAnyUuid(uuids, A2DP_PROFILE_UUIDS)) {
-            profiles.add(Profile.A2DP);
-        }
-
-        if (BluetoothUuid.containsAnyUuid(uuids, OPP_PROFILE_UUIDS)) {
-            profiles.add(Profile.OPP);
-        }
-    }
-
-    protected LocalBluetoothProfileManager(LocalBluetoothManager localManager) {
-        mLocalManager = localManager;
-    }
-
-    public abstract Set<BluetoothDevice> getConnectedDevices();
-
-    public abstract boolean connect(BluetoothDevice device);
-
-    public abstract boolean disconnect(BluetoothDevice device);
-
-    public abstract int getConnectionStatus(BluetoothDevice device);
-
-    public abstract int getSummary(BluetoothDevice device);
-
-    public abstract int convertState(int a2dpState);
-
-    public abstract boolean isPreferred(BluetoothDevice device);
-
-    public abstract int getPreferred(BluetoothDevice device);
-
-    public abstract void setPreferred(BluetoothDevice device, boolean preferred);
-
-    public boolean isConnected(BluetoothDevice device) {
-        return SettingsBtStatus.isConnectionStatusConnected(getConnectionStatus(device));
-    }
-
-    public abstract boolean isProfileReady();
-
-    // TODO: int instead of enum
-    public enum Profile {
-        HEADSET(R.string.bluetooth_profile_headset),
-        A2DP(R.string.bluetooth_profile_a2dp),
-        OPP(R.string.bluetooth_profile_opp);
-
-        public final int localizedString;
-
-        private Profile(int localizedString) {
-            this.localizedString = localizedString;
-        }
-    }
-
-    /**
-     * A2dpProfileManager is an abstraction for the {@link BluetoothA2dp} service.
-     */
-    private static class A2dpProfileManager extends LocalBluetoothProfileManager {
-        private BluetoothA2dp mService;
-
-        public A2dpProfileManager(LocalBluetoothManager localManager) {
-            super(localManager);
-            mService = new BluetoothA2dp(localManager.getContext());
-        }
-
-        @Override
-        public Set<BluetoothDevice> getConnectedDevices() {
-            return mService.getNonDisconnectedSinks();
-        }
-
-        @Override
-        public boolean connect(BluetoothDevice device) {
-            Set<BluetoothDevice> sinks = mService.getNonDisconnectedSinks();
-            if (sinks != null) {
-                for (BluetoothDevice sink : sinks) {
-                    mService.disconnectSink(sink);
-                }
-            }
-            return mService.connectSink(device);
-        }
-
-        @Override
-        public boolean disconnect(BluetoothDevice device) {
-            // Downgrade priority as user is disconnecting the sink.
-            if (mService.getSinkPriority(device) > BluetoothA2dp.PRIORITY_ON) {
-                mService.setSinkPriority(device, BluetoothA2dp.PRIORITY_ON);
-            }
-            return mService.disconnectSink(device);
-        }
-
-        @Override
-        public int getConnectionStatus(BluetoothDevice device) {
-            return convertState(mService.getSinkState(device));
-        }
-
-        @Override
-        public int getSummary(BluetoothDevice device) {
-            int connectionStatus = getConnectionStatus(device);
-
-            if (SettingsBtStatus.isConnectionStatusConnected(connectionStatus)) {
-                return R.string.bluetooth_a2dp_profile_summary_connected;
-            } else {
-                return SettingsBtStatus.getConnectionStatusSummary(connectionStatus);
+        if (mHeadsetProfile != null) {
+            if ((BluetoothUuid.isUuidPresent(localUuids, BluetoothUuid.HSP_AG) &&
+                    BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.HSP)) ||
+                    (BluetoothUuid.isUuidPresent(localUuids, BluetoothUuid.Handsfree_AG) &&
+                            BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.Handsfree))) {
+                profiles.add(mHeadsetProfile);
+                removedProfiles.remove(mHeadsetProfile);
             }
         }
 
-        @Override
-        public boolean isPreferred(BluetoothDevice device) {
-            return mService.getSinkPriority(device) > BluetoothA2dp.PRIORITY_OFF;
+        if (BluetoothUuid.containsAnyUuid(uuids, A2dpProfile.SINK_UUIDS) &&
+            mA2dpProfile != null) {
+            profiles.add(mA2dpProfile);
+            removedProfiles.remove(mA2dpProfile);
         }
 
-        @Override
-        public int getPreferred(BluetoothDevice device) {
-            return mService.getSinkPriority(device);
+        if (BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.ObexObjectPush) &&
+            mOppProfile != null) {
+            profiles.add(mOppProfile);
+            removedProfiles.remove(mOppProfile);
         }
 
-        @Override
-        public void setPreferred(BluetoothDevice device, boolean preferred) {
-            if (preferred) {
-                if (mService.getSinkPriority(device) < BluetoothA2dp.PRIORITY_ON) {
-                    mService.setSinkPriority(device, BluetoothA2dp.PRIORITY_ON);
-                }
-            } else {
-                mService.setSinkPriority(device, BluetoothA2dp.PRIORITY_OFF);
-            }
+        if (BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.Hid) &&
+            mHidProfile != null) {
+            profiles.add(mHidProfile);
+            removedProfiles.remove(mHidProfile);
         }
 
-        @Override
-        public int convertState(int a2dpState) {
-            switch (a2dpState) {
-            case BluetoothA2dp.STATE_CONNECTED:
-                return SettingsBtStatus.CONNECTION_STATUS_CONNECTED;
-            case BluetoothA2dp.STATE_CONNECTING:
-                return SettingsBtStatus.CONNECTION_STATUS_CONNECTING;
-            case BluetoothA2dp.STATE_DISCONNECTED:
-                return SettingsBtStatus.CONNECTION_STATUS_DISCONNECTED;
-            case BluetoothA2dp.STATE_DISCONNECTING:
-                return SettingsBtStatus.CONNECTION_STATUS_DISCONNECTING;
-            case BluetoothA2dp.STATE_PLAYING:
-                return SettingsBtStatus.CONNECTION_STATUS_ACTIVE;
-            default:
-                return SettingsBtStatus.CONNECTION_STATUS_UNKNOWN;
-            }
-        }
-
-        @Override
-        public boolean isProfileReady() {
-            return true;
-        }
-    }
-
-    /**
-     * HeadsetProfileManager is an abstraction for the {@link BluetoothHeadset} service.
-     */
-    private static class HeadsetProfileManager extends LocalBluetoothProfileManager
-            implements BluetoothHeadset.ServiceListener {
-        private BluetoothHeadset mService;
-        private Handler mUiHandler = new Handler();
-        private boolean profileReady = false;
-        private BluetoothDevice mDelayedConnectDevice = null;
-        private BluetoothDevice mDelayedDisconnectDevice = null;
-
-        public HeadsetProfileManager(LocalBluetoothManager localManager) {
-            super(localManager);
-            mService = new BluetoothHeadset(localManager.getContext(), this);
-        }
-
-        public void onServiceConnected() {
-            profileReady = true;
-            // This could be called on a non-UI thread, funnel to UI thread.
-            // Delay for a few seconds to allow other proxies to connect.
-            mUiHandler.postDelayed(new Runnable() {
-                public void run() {
-                    BluetoothDevice device = mService.getCurrentHeadset();
-
-                    if (mDelayedConnectDevice != null) {
-                        Log.i(TAG, "service ready: connecting...");
-                        BluetoothDevice newDevice = mDelayedConnectDevice;
-                        mDelayedConnectDevice = null;
-
-                        if (!newDevice.equals(device)) {
-                            if (device != null) {
-                                Log.i(TAG, "disconnecting old headset");
-                                mService.disconnectHeadset(device);
-                            }
-                            Log.i(TAG, "connecting to pending headset");
-                            mService.connectHeadset(newDevice);
-                        }
-                    } else if (mDelayedDisconnectDevice != null) {
-                        Log.i(TAG, "service ready: disconnecting...");
-                        if (mDelayedDisconnectDevice.equals(device)) {
-                            Log.i(TAG, "disconnecting headset");
-                            mService.disconnectHeadset(device);
-                        }
-                        mDelayedDisconnectDevice = null;
-                    } else {
-                        /*
-                         * We just bound to the service, so refresh the UI of the
-                         * headset device.
-                         */
-                        if (device == null) return;
-                        mLocalManager.getCachedDeviceManager()
-                            .onProfileStateChanged(device, Profile.HEADSET,
-                                                   BluetoothHeadset.STATE_CONNECTED);
-                    }
-                }
-            }, 2000);  // wait 2 seconds for other proxies to connect
-
-            if (mServiceListeners.size() > 0) {
-                Iterator<ServiceListener> it = mServiceListeners.iterator();
-                while(it.hasNext()) {
-                    it.next().onServiceConnected();
-                }
-            }
-        }
-
-        public void onServiceDisconnected() {
-            profileReady = false;
-            if (mServiceListeners.size() > 0) {
-                Iterator<ServiceListener> it = mServiceListeners.iterator();
-                while(it.hasNext()) {
-                    it.next().onServiceDisconnected();
-                }
-            }
-        }
-
-        @Override
-        public boolean isProfileReady() {
-            return profileReady;
-        }
-
-        @Override
-        public Set<BluetoothDevice> getConnectedDevices() {
-            Set<BluetoothDevice> devices = null;
-            BluetoothDevice device = mService.getCurrentHeadset();
-            if (device != null) {
-                devices = new HashSet<BluetoothDevice>();
-                devices.add(device);
-            }
-            return devices;
-        }
-
-        @Override
-        public boolean connect(BluetoothDevice device) {
-            // Delay connection until onServiceConnected() if the
-            // manager isn't ready
-            if (!isManagerReady()) {
-                Log.w(TAG, "HeadsetProfileManager delaying connect, "
-                        + "manager not ready");
-                mDelayedConnectDevice = device;
-                mDelayedDisconnectDevice = null;
-                return true;  // hopefully it will succeed
-            }
-
-            // Since connectHeadset fails if already connected to a headset, we
-            // disconnect from any headset first
-            BluetoothDevice currDevice = mService.getCurrentHeadset();
-            if (currDevice != null) {
-                mService.disconnectHeadset(currDevice);
-            }
-            return mService.connectHeadset(device);
-        }
-
-        @Override
-        public boolean disconnect(BluetoothDevice device) {
-            // Delay connection until onServiceConnected() if the
-            // manager isn't ready
-            if (!isManagerReady()) {
-                Log.w(TAG, "HeadsetProfileManager delaying disconnect, "
-                        + "manager not ready");
-                mDelayedConnectDevice = null;
-                mDelayedDisconnectDevice = device;
-                return true;  // hopefully it will succeed
-            }
-
-            BluetoothDevice currDevice = mService.getCurrentHeadset();
-            if (currDevice != null && currDevice.equals(device)) {
-                // Downgrade prority as user is disconnecting the headset.
-                if (mService.getPriority(device) > BluetoothHeadset.PRIORITY_ON) {
-                    mService.setPriority(device, BluetoothHeadset.PRIORITY_ON);
-                }
-                return mService.disconnectHeadset(device);
-            } else {
-                return false;
-            }
-        }
-
-        @Override
-        public int getConnectionStatus(BluetoothDevice device) {
-            BluetoothDevice currentDevice = mService.getCurrentHeadset();
-            return currentDevice != null && currentDevice.equals(device)
-                    ? convertState(mService.getState(device))
-                    : SettingsBtStatus.CONNECTION_STATUS_DISCONNECTED;
-        }
-
-        @Override
-        public int getSummary(BluetoothDevice device) {
-            int connectionStatus = getConnectionStatus(device);
-
-            if (SettingsBtStatus.isConnectionStatusConnected(connectionStatus)) {
-                return R.string.bluetooth_headset_profile_summary_connected;
-            } else {
-                return SettingsBtStatus.getConnectionStatusSummary(connectionStatus);
-            }
-        }
-
-        @Override
-        public boolean isPreferred(BluetoothDevice device) {
-            return mService.getPriority(device) > BluetoothHeadset.PRIORITY_OFF;
-        }
-
-        @Override
-        public int getPreferred(BluetoothDevice device) {
-            return mService.getPriority(device);
-        }
-
-        @Override
-        public void setPreferred(BluetoothDevice device, boolean preferred) {
-            if (preferred) {
-                if (mService.getPriority(device) < BluetoothHeadset.PRIORITY_ON) {
-                    mService.setPriority(device, BluetoothHeadset.PRIORITY_ON);
-                }
-            } else {
-                mService.setPriority(device, BluetoothHeadset.PRIORITY_OFF);
-            }
-        }
-
-        @Override
-        public int convertState(int headsetState) {
-            switch (headsetState) {
-            case BluetoothHeadset.STATE_CONNECTED:
-                return SettingsBtStatus.CONNECTION_STATUS_CONNECTED;
-            case BluetoothHeadset.STATE_CONNECTING:
-                return SettingsBtStatus.CONNECTION_STATUS_CONNECTING;
-            case BluetoothHeadset.STATE_DISCONNECTED:
-                return SettingsBtStatus.CONNECTION_STATUS_DISCONNECTED;
-            default:
-                return SettingsBtStatus.CONNECTION_STATUS_UNKNOWN;
-            }
-        }
-    }
-
-    /**
-     * OppProfileManager
-     */
-    private static class OppProfileManager extends LocalBluetoothProfileManager {
-
-        public OppProfileManager(LocalBluetoothManager localManager) {
-            super(localManager);
-        }
-
-        @Override
-        public Set<BluetoothDevice> getConnectedDevices() {
-            return null;
-        }
-
-        @Override
-        public boolean connect(BluetoothDevice device) {
-            return false;
-        }
-
-        @Override
-        public boolean disconnect(BluetoothDevice device) {
-            return false;
-        }
-
-        @Override
-        public int getConnectionStatus(BluetoothDevice device) {
-            return -1;
-        }
-
-        @Override
-        public int getSummary(BluetoothDevice device) {
-            int connectionStatus = getConnectionStatus(device);
-
-            if (SettingsBtStatus.isConnectionStatusConnected(connectionStatus)) {
-                return R.string.bluetooth_opp_profile_summary_connected;
-            } else {
-                return R.string.bluetooth_opp_profile_summary_not_connected;
-            }
-        }
-
-        @Override
-        public boolean isPreferred(BluetoothDevice device) {
-            return false;
-        }
-
-        @Override
-        public int getPreferred(BluetoothDevice device) {
-            return -1;
-        }
-
-        @Override
-        public void setPreferred(BluetoothDevice device, boolean preferred) {
-        }
-
-        @Override
-        public boolean isProfileReady() {
-            return true;
-        }
-
-        @Override
-        public int convertState(int oppState) {
-            switch (oppState) {
-            case 0:
-                return SettingsBtStatus.CONNECTION_STATUS_CONNECTED;
-            case 1:
-                return SettingsBtStatus.CONNECTION_STATUS_CONNECTING;
-            case 2:
-                return SettingsBtStatus.CONNECTION_STATUS_DISCONNECTED;
-            default:
-                return SettingsBtStatus.CONNECTION_STATUS_UNKNOWN;
-            }
+        if (BluetoothUuid.isUuidPresent(uuids, BluetoothUuid.NAP) &&
+            mPanProfile != null) {
+            profiles.add(mPanProfile);
+            removedProfiles.remove(mPanProfile);
         }
     }
 }

@@ -14,40 +14,9 @@
      limitations under the License.
 -->
 
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+        android:title="@string/storage_settings_title">
 
-    <CheckBoxPreference android:key="pref_switch_storage"
-            android:title="@string/pref_switch_storage_title"
-            android:summaryOn="@string/pref_switch_storage_summary_on"
-            android:summaryOff="@string/pref_switch_storage_summary_off" />
-
-    <PreferenceCategory android:key="memory_sd"
-            android:title="@string/sd_memory">
-        <Preference android:key="memory_sd_size" 
-            style="?android:attr/preferenceInformationStyle" 
-            android:title="@string/memory_size"
-            android:summary="00"/>
-        <Preference android:key="memory_sd_avail" 
-            style="?android:attr/preferenceInformationStyle" 
-            android:title="@string/memory_available"
-            android:summary="00"/>
-        <Preference android:key="memory_sd_mount_toggle"
-            android:title="@string/sd_eject"
-            android:summary="@string/sd_eject_summary"/>
-        <Preference android:key="memory_sd_format"
-            android:title="@string/sd_format"
-            android:summary="@string/sd_format_summary"/>
-    </PreferenceCategory>
-
-    <PreferenceCategory android:title="@string/internal_memory">
-        <Preference android:key="memory_internal_size"
-            style="?android:attr/preferenceInformationStyle"
-            android:title="@string/memory_size"
-            android:summary="00"/>
-        <Preference android:key="memory_internal_avail"
-            style="?android:attr/preferenceInformationStyle"
-            android:title="@string/memory_available"
-            android:summary="00"/>
-    </PreferenceCategory>
+<!-- Preference categories are dynamically created based on the list of available storage volumes -->
 
 </PreferenceScreen>

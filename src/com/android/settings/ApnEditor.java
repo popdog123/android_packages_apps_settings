@@ -17,6 +17,7 @@
 package com.android.settings;
 
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Intent;
@@ -28,16 +29,19 @@ import android.os.Bundle;
 import android.os.SystemProperties;
 import android.preference.EditTextPreference;
 import android.preference.ListPreference;
+import android.preference.CheckBoxPreference;
 import android.preference.Preference;
 import android.preference.PreferenceActivity;
 import android.provider.Telephony;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 
-import com.android.internal.telephony.TelephonyProperties;
+import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.RILConstants;
+import com.android.internal.telephony.TelephonyProperties;
 
 
 public class ApnEditor extends PreferenceActivity
@@ -49,10 +53,14 @@ public class ApnEditor extends PreferenceActivity
     private final static String SAVED_POS = "pos";
     private final static String KEY_AUTH_TYPE = "auth_type";
     private final static String KEY_PROTOCOL = "apn_protocol";
+    private final static String KEY_ROAMING_PROTOCOL = "apn_roaming_protocol";
+    private final static String KEY_CARRIER_ENABLED = "carrier_enabled";
+    private final static String KEY_BEARER = "bearer";
 
     private static final int MENU_DELETE = Menu.FIRST;
     private static final int MENU_SAVE = Menu.FIRST + 1;
     private static final int MENU_CANCEL = Menu.FIRST + 2;
+    private static final int ERROR_DIALOG_ID = 0;
 
     private static String sNotSet;
     private EditTextPreference mName;
@@ -70,6 +78,9 @@ public class ApnEditor extends PreferenceActivity
     private ListPreference mAuthType;
     private EditTextPreference mApnType;
     private ListPreference mProtocol;
+    private ListPreference mRoamingProtocol;
+    private CheckBoxPreference mCarrierEnabled;
+    private ListPreference mBearer;
 
     private String mCurMnc;
     private String mCurMcc;
@@ -101,6 +112,9 @@ public class ApnEditor extends PreferenceActivity
             Telephony.Carriers.AUTH_TYPE, // 14
             Telephony.Carriers.TYPE, // 15
             Telephony.Carriers.PROTOCOL, // 16
+            Telephony.Carriers.CARRIER_ENABLED, // 17
+            Telephony.Carriers.BEARER, // 18
+            Telephony.Carriers.ROAMING_PROTOCOL // 19
     };
 
     private static final int ID_INDEX = 0;
@@ -119,6 +133,9 @@ public class ApnEditor extends PreferenceActivity
     private static final int AUTH_TYPE_INDEX = 14;
     private static final int TYPE_INDEX = 15;
     private static final int PROTOCOL_INDEX = 16;
+    private static final int CARRIER_ENABLED_INDEX = 17;
+    private static final int BEARER_INDEX = 18;
+    private static final int ROAMING_PROTOCOL_INDEX = 19;
 
 
     @Override
@@ -147,6 +164,22 @@ public class ApnEditor extends PreferenceActivity
 
         mProtocol = (ListPreference) findPreference(KEY_PROTOCOL);
         mProtocol.setOnPreferenceChangeListener(this);
+
+        mRoamingProtocol = (ListPreference) findPreference(KEY_ROAMING_PROTOCOL);
+        // Only enable this on CDMA phones for now, since it may cause problems on other phone
+        // types.  (This screen is not normally accessible on CDMA phones, but is useful for
+        // testing.)
+        TelephonyManager tm = (TelephonyManager)getSystemService(TELEPHONY_SERVICE);
+        if (tm.getCurrentPhoneType() == Phone.PHONE_TYPE_CDMA) {
+            mRoamingProtocol.setOnPreferenceChangeListener(this);
+        } else {
+            getPreferenceScreen().removePreference(mRoamingProtocol);
+        }
+
+        mCarrierEnabled = (CheckBoxPreference) findPreference(KEY_CARRIER_ENABLED);
+
+        mBearer = (ListPreference) findPreference(KEY_BEARER);
+        mBearer.setOnPreferenceChangeListener(this);
 
         mRes = getResources();
 
@@ -240,9 +273,14 @@ public class ApnEditor extends PreferenceActivity
             int authVal = mCursor.getInt(AUTH_TYPE_INDEX);
             if (authVal != -1) {
                 mAuthType.setValueIndex(authVal);
+            } else {
+                mAuthType.setValue(null);
             }
 
             mProtocol.setValue(mCursor.getString(PROTOCOL_INDEX));
+            mRoamingProtocol.setValue(mCursor.getString(ROAMING_PROTOCOL_INDEX));
+            mCarrierEnabled.setChecked(mCursor.getInt(CARRIER_ENABLED_INDEX)==1);
+            mBearer.setValue(mCursor.getString(BEARER_INDEX));
         }
 
         mName.setSummary(checkNull(mName.getText()));
@@ -271,7 +309,11 @@ public class ApnEditor extends PreferenceActivity
         }
 
         mProtocol.setSummary(
-                checkNull(protocolDescription(mProtocol.getValue())));
+                checkNull(protocolDescription(mProtocol.getValue(), mProtocol)));
+        mRoamingProtocol.setSummary(
+                checkNull(protocolDescription(mRoamingProtocol.getValue(), mRoamingProtocol)));
+        mBearer.setSummary(
+                checkNull(bearerDescription(mBearer.getValue())));
     }
 
     /**
@@ -279,14 +321,28 @@ public class ApnEditor extends PreferenceActivity
      * raw value of the protocol preference (e.g., "IPV4V6"). If unknown,
      * return null.
      */
-    private String protocolDescription(String raw) {
-        int protocolIndex = mProtocol.findIndexOfValue(raw);
+    private String protocolDescription(String raw, ListPreference protocol) {
+        int protocolIndex = protocol.findIndexOfValue(raw);
         if (protocolIndex == -1) {
             return null;
         } else {
             String[] values = mRes.getStringArray(R.array.apn_protocol_entries);
             try {
                 return values[protocolIndex];
+            } catch (ArrayIndexOutOfBoundsException e) {
+                return null;
+            }
+        }
+    }
+
+    private String bearerDescription(String raw) {
+        int mBearerIndex = mBearer.findIndexOfValue(raw);
+        if (mBearerIndex == -1) {
+            return null;
+        } else {
+            String[] values = mRes.getStringArray(R.array.bearer_entries);
+            try {
+                return values[mBearerIndex];
             } catch (ArrayIndexOutOfBoundsException e) {
                 return null;
             }
@@ -305,17 +361,29 @@ public class ApnEditor extends PreferenceActivity
             } catch (NumberFormatException e) {
                 return false;
             }
-            return true;
-        }
-
-        if (KEY_PROTOCOL.equals(key)) {
-            String protocol = protocolDescription((String) newValue);
+        } else if (KEY_PROTOCOL.equals(key)) {
+            String protocol = protocolDescription((String) newValue, mProtocol);
             if (protocol == null) {
                 return false;
             }
             mProtocol.setSummary(protocol);
             mProtocol.setValue((String) newValue);
+        } else if (KEY_ROAMING_PROTOCOL.equals(key)) {
+            String protocol = protocolDescription((String) newValue, mRoamingProtocol);
+            if (protocol == null) {
+                return false;
+            }
+            mRoamingProtocol.setSummary(protocol);
+            mRoamingProtocol.setValue((String) newValue);
+        } else if (KEY_BEARER.equals(key)) {
+            String bearer = bearerDescription((String) newValue);
+            if (bearer == null) {
+                return false;
+            }
+            mBearer.setValue((String) newValue);
+            mBearer.setSummary(bearer);
         }
+
         return true;
     }
 
@@ -325,7 +393,7 @@ public class ApnEditor extends PreferenceActivity
         // If it's a new APN, then cancel will delete the new entry in onPause
         if (!mNewApn) {
             menu.add(0, MENU_DELETE, 0, R.string.menu_delete)
-                .setIcon(android.R.drawable.ic_menu_delete);
+                .setIcon(R.drawable.ic_menu_delete_holo_dark);
         }
         menu.add(0, MENU_SAVE, 0, R.string.menu_save)
             .setIcon(android.R.drawable.ic_menu_save);
@@ -388,19 +456,8 @@ public class ApnEditor extends PreferenceActivity
         String mcc = checkNotSet(mMcc.getText());
         String mnc = checkNotSet(mMnc.getText());
 
-        String errorMsg = null;
-        if (name.length() < 1) {
-            errorMsg = mRes.getString(R.string.error_name_empty);
-        } else if (apn.length() < 1) {
-            errorMsg = mRes.getString(R.string.error_apn_empty);
-        } else if (mcc.length() != 3) {
-            errorMsg = mRes.getString(R.string.error_mcc_not3);
-        } else if ((mnc.length() & 0xFFFE) != 2) {
-            errorMsg = mRes.getString(R.string.error_mnc_not23);
-        }
-
-        if (errorMsg != null && !force) {
-            showErrorMessage(errorMsg);
+        if (getErrorMsg() != null && !force) {
+            showDialog(ERROR_DIALOG_ID);
             return false;
         }
 
@@ -438,11 +495,7 @@ public class ApnEditor extends PreferenceActivity
         }
 
         values.put(Telephony.Carriers.PROTOCOL, checkNotSet(mProtocol.getValue()));
-
-        // Hardcode IPv4 roaming for now until the carriers sort out all the
-        // billing arrangements.
-        values.put(Telephony.Carriers.ROAMING_PROTOCOL,
-                RILConstants.SETUP_DATA_PROTOCOL_IP);
+        values.put(Telephony.Carriers.ROAMING_PROTOCOL, checkNotSet(mRoamingProtocol.getValue()));
 
         values.put(Telephony.Carriers.TYPE, checkNotSet(mApnType.getText()));
 
@@ -457,17 +510,64 @@ public class ApnEditor extends PreferenceActivity
             }
         }
 
+        String bearerVal = mBearer.getValue();
+        if (bearerVal != null) {
+            values.put(Telephony.Carriers.BEARER, Integer.parseInt(bearerVal));
+        }
+
         getContentResolver().update(mUri, values, null, null);
 
         return true;
     }
 
-    private void showErrorMessage(String message) {
-        new AlertDialog.Builder(this)
-            .setTitle(R.string.error_title)
-            .setMessage(message)
-            .setPositiveButton(android.R.string.ok, null)
-            .show();
+    private String getErrorMsg() {
+        String errorMsg = null;
+
+        String name = checkNotSet(mName.getText());
+        String apn = checkNotSet(mApn.getText());
+        String mcc = checkNotSet(mMcc.getText());
+        String mnc = checkNotSet(mMnc.getText());
+
+        if (name.length() < 1) {
+            errorMsg = mRes.getString(R.string.error_name_empty);
+        } else if (apn.length() < 1) {
+            errorMsg = mRes.getString(R.string.error_apn_empty);
+        } else if (mcc.length() != 3) {
+            errorMsg = mRes.getString(R.string.error_mcc_not3);
+        } else if ((mnc.length() & 0xFFFE) != 2) {
+            errorMsg = mRes.getString(R.string.error_mnc_not23);
+        }
+
+        return errorMsg;
+    }
+
+    @Override
+    protected Dialog onCreateDialog(int id) {
+
+        if (id == ERROR_DIALOG_ID) {
+            String msg = getErrorMsg();
+
+            return new AlertDialog.Builder(this)
+                    .setTitle(R.string.error_title)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .setMessage(msg)
+                    .create();
+        }
+
+        return super.onCreateDialog(id);
+    }
+
+    @Override
+    protected void onPrepareDialog(int id, Dialog dialog) {
+        super.onPrepareDialog(id, dialog);
+
+        if (id == ERROR_DIALOG_ID) {
+            String msg = getErrorMsg();
+
+            if (msg != null) {
+                ((AlertDialog)dialog).setMessage(msg);
+            }
+        }
     }
 
     private void deleteApn() {

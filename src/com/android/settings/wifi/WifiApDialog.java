@@ -16,8 +16,6 @@
 
 package com.android.settings.wifi;
 
-import com.android.settings.R;
-
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -28,33 +26,33 @@ import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
-import android.util.Log;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import com.android.settings.R;
+
 /**
  * Dialog to configure the SSID and security settings
  * for Access Point operation
  */
-class WifiApDialog extends AlertDialog implements View.OnClickListener,
+public class WifiApDialog extends AlertDialog implements View.OnClickListener,
         TextWatcher, AdapterView.OnItemSelectedListener {
 
     static final int BUTTON_SUBMIT = DialogInterface.BUTTON_POSITIVE;
 
     private final DialogInterface.OnClickListener mListener;
 
-    private static final int OPEN_INDEX = 0;
-    private static final int WPA_INDEX = 1;
+    public static final int OPEN_INDEX = 0;
+    public static final int WPA_INDEX = 1;
+    public static final int WPA2_INDEX = 2;
 
     private View mView;
     private TextView mSsid;
-    private int mSecurityType = AccessPoint.SECURITY_NONE;
+    private int mSecurityTypeIndex = OPEN_INDEX;
     private EditText mPassword;
 
     WifiConfiguration mWifiConfig;
@@ -64,8 +62,18 @@ class WifiApDialog extends AlertDialog implements View.OnClickListener,
         super(context);
         mListener = listener;
         mWifiConfig = wifiConfig;
-        if (wifiConfig != null)
-          mSecurityType = AccessPoint.getSecurity(wifiConfig);
+        if (wifiConfig != null) {
+            mSecurityTypeIndex = getSecurityTypeIndex(wifiConfig);
+        }
+    }
+
+    public static int getSecurityTypeIndex(WifiConfiguration wifiConfig) {
+        if (wifiConfig.allowedKeyManagement.get(KeyMgmt.WPA_PSK)) {
+            return WPA_INDEX;
+        } else if (wifiConfig.allowedKeyManagement.get(KeyMgmt.WPA2_PSK)) {
+            return WPA2_INDEX;
+        }
+        return OPEN_INDEX;
     }
 
     public WifiConfiguration getConfig() {
@@ -80,13 +88,22 @@ class WifiApDialog extends AlertDialog implements View.OnClickListener,
          */
         config.SSID = mSsid.getText().toString();
 
-        switch (mSecurityType) {
-            case AccessPoint.SECURITY_NONE:
+        switch (mSecurityTypeIndex) {
+            case OPEN_INDEX:
                 config.allowedKeyManagement.set(KeyMgmt.NONE);
                 return config;
 
-            case AccessPoint.SECURITY_PSK:
+            case WPA_INDEX:
                 config.allowedKeyManagement.set(KeyMgmt.WPA_PSK);
+                config.allowedAuthAlgorithms.set(AuthAlgorithm.OPEN);
+                if (mPassword.length() != 0) {
+                    String password = mPassword.getText().toString();
+                    config.preSharedKey = password;
+                }
+                return config;
+
+            case WPA2_INDEX:
+                config.allowedKeyManagement.set(KeyMgmt.WPA2_PSK);
                 config.allowedAuthAlgorithms.set(AuthAlgorithm.OPEN);
                 if (mPassword.length() != 0) {
                     String password = mPassword.getText().toString();
@@ -97,6 +114,7 @@ class WifiApDialog extends AlertDialog implements View.OnClickListener,
         return null;
     }
 
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
 
         mView = getLayoutInflater().inflate(R.layout.wifi_ap_dialog, null);
@@ -118,15 +136,10 @@ class WifiApDialog extends AlertDialog implements View.OnClickListener,
 
         if (mWifiConfig != null) {
             mSsid.setText(mWifiConfig.SSID);
-            switch (mSecurityType) {
-              case AccessPoint.SECURITY_NONE:
-                  mSecurity.setSelection(OPEN_INDEX);
-                  break;
-              case AccessPoint.SECURITY_PSK:
-                  String str = mWifiConfig.preSharedKey;
-                  mPassword.setText(str);
-                  mSecurity.setSelection(WPA_INDEX);
-                  break;
+            mSecurity.setSelection(mSecurityTypeIndex);
+            if (mSecurityTypeIndex == WPA_INDEX ||
+                    mSecurityTypeIndex == WPA2_INDEX) {
+                  mPassword.setText(mWifiConfig.preSharedKey);
             }
         }
 
@@ -143,7 +156,8 @@ class WifiApDialog extends AlertDialog implements View.OnClickListener,
 
     private void validate() {
         if ((mSsid != null && mSsid.length() == 0) ||
-                   (mSecurityType == AccessPoint.SECURITY_PSK && mPassword.length() < 8)) {
+                   (((mSecurityTypeIndex == WPA_INDEX) || (mSecurityTypeIndex == WPA2_INDEX))&&
+                        mPassword.length() < 8)) {
             getButton(BUTTON_SUBMIT).setEnabled(false);
         } else {
             getButton(BUTTON_SUBMIT).setEnabled(true);
@@ -167,20 +181,19 @@ class WifiApDialog extends AlertDialog implements View.OnClickListener,
         validate();
     }
 
-    public void onItemSelected(AdapterView parent, View view, int position, long id) {
-        if(position == OPEN_INDEX)
-            mSecurityType = AccessPoint.SECURITY_NONE;
-        else
-            mSecurityType = AccessPoint.SECURITY_PSK;
+    @Override
+    public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+        mSecurityTypeIndex = position;
         showSecurityFields();
         validate();
     }
 
-    public void onNothingSelected(AdapterView parent) {
+    @Override
+    public void onNothingSelected(AdapterView<?> parent) {
     }
 
     private void showSecurityFields() {
-        if (mSecurityType == AccessPoint.SECURITY_NONE) {
+        if (mSecurityTypeIndex == OPEN_INDEX) {
             mView.findViewById(R.id.fields).setVisibility(View.GONE);
             return;
         }

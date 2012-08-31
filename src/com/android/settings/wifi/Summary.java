@@ -20,7 +20,6 @@ import com.android.settings.R;
 
 import android.content.Context;
 import android.net.NetworkInfo.DetailedState;
-import android.text.TextUtils;
 
 class Summary {
     static String get(Context context, String ssid, DetailedState state) {

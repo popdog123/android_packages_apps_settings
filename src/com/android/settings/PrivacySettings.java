@@ -22,23 +22,19 @@ import android.app.backup.IBackupManager;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.DialogInterface;
-import android.content.SharedPreferences;
-import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.preference.CheckBoxPreference;
 import android.preference.Preference;
-import android.preference.PreferenceActivity;
 import android.preference.PreferenceScreen;
 import android.provider.Settings;
-import android.text.method.LinkMovementMethod;
-import android.widget.TextView;
 
 /**
  * Gesture lock pattern settings.
  */
-public class PrivacySettings extends PreferenceActivity implements
+public class PrivacySettings extends SettingsPreferenceFragment implements
         DialogInterface.OnClickListener {
 
     // Vendor specific
@@ -46,26 +42,42 @@ public class PrivacySettings extends PreferenceActivity implements
     private static final String BACKUP_CATEGORY = "backup_category";
     private static final String BACKUP_DATA = "backup_data";
     private static final String AUTO_RESTORE = "auto_restore";
+    private static final String CONFIGURE_ACCOUNT = "configure_account";
+    private IBackupManager mBackupManager;
     private CheckBoxPreference mBackup;
     private CheckBoxPreference mAutoRestore;
     private Dialog mConfirmDialog;
+    private PreferenceScreen mConfigure;
 
     private static final int DIALOG_ERASE_BACKUP = 2;
-    private int     mDialogType;
+    private int mDialogType;
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         addPreferencesFromResource(R.xml.privacy_settings);
         final PreferenceScreen screen = getPreferenceScreen();
 
+        mBackupManager = IBackupManager.Stub.asInterface(
+                ServiceManager.getService(Context.BACKUP_SERVICE));
+
         mBackup = (CheckBoxPreference) screen.findPreference(BACKUP_DATA);
         mAutoRestore = (CheckBoxPreference) screen.findPreference(AUTO_RESTORE);
+        mConfigure = (PreferenceScreen) screen.findPreference(CONFIGURE_ACCOUNT);
 
         // Vendor specific
-        if (getPackageManager().resolveContentProvider(GSETTINGS_PROVIDER, 0) == null) {
+        if (getActivity().getPackageManager().
+                resolveContentProvider(GSETTINGS_PROVIDER, 0) == null) {
             screen.removePreference(findPreference(BACKUP_CATEGORY));
         }
+        updateToggles();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+
+        // Refresh UI
         updateToggles();
     }
 
@@ -89,20 +101,14 @@ public class PrivacySettings extends PreferenceActivity implements
                 setBackupEnabled(true);
             }
         } else if (preference == mAutoRestore) {
-            IBackupManager bm = IBackupManager.Stub.asInterface(
-                    ServiceManager.getService(Context.BACKUP_SERVICE));
-            if (bm != null) {
-                // TODO: disable via the backup manager interface
-                boolean curState = mAutoRestore.isChecked();
-                try {
-                    bm.setAutoRestore(curState);
-                } catch (RemoteException e) {
-                    mAutoRestore.setChecked(!curState);
-                }
+            boolean curState = mAutoRestore.isChecked();
+            try {
+                mBackupManager.setAutoRestore(curState);
+            } catch (RemoteException e) {
+                mAutoRestore.setChecked(!curState);
             }
         }
-
-        return false;
+        return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
     private void showEraseBackupDialog() {
@@ -110,7 +116,8 @@ public class PrivacySettings extends PreferenceActivity implements
 
         mDialogType = DIALOG_ERASE_BACKUP;
         CharSequence msg = getResources().getText(R.string.backup_erase_dialog_message);
-        mConfirmDialog = new AlertDialog.Builder(this).setMessage(msg)
+        // TODO: DialogFragment?
+        mConfirmDialog = new AlertDialog.Builder(getActivity()).setMessage(msg)
                 .setTitle(R.string.backup_erase_dialog_title)
                 .setIcon(android.R.drawable.ic_dialog_alert)
                 .setPositiveButton(android.R.string.ok, this)
@@ -124,13 +131,46 @@ public class PrivacySettings extends PreferenceActivity implements
     private void updateToggles() {
         ContentResolver res = getContentResolver();
 
-        final boolean backupEnabled = Settings.Secure.getInt(res,
-                Settings.Secure.BACKUP_ENABLED, 0) == 1;
+        boolean backupEnabled = false;
+        Intent configIntent = null;
+        String configSummary = null;
+        try {
+            backupEnabled = mBackupManager.isBackupEnabled();
+            String transport = mBackupManager.getCurrentTransport();
+            configIntent = mBackupManager.getConfigurationIntent(transport);
+            configSummary = mBackupManager.getDestinationString(transport);
+        } catch (RemoteException e) {
+            // leave it 'false' and disable the UI; there's no backup manager
+            mBackup.setEnabled(false);
+        }
         mBackup.setChecked(backupEnabled);
 
         mAutoRestore.setChecked(Settings.Secure.getInt(res,
                 Settings.Secure.BACKUP_AUTO_RESTORE, 1) == 1);
         mAutoRestore.setEnabled(backupEnabled);
+
+        final boolean configureEnabled = (configIntent != null) && backupEnabled;
+        mConfigure.setEnabled(configureEnabled);
+        mConfigure.setIntent(configIntent);
+        setConfigureSummary(configSummary);
+}
+
+    private void setConfigureSummary(String summary) {
+        if (summary != null) {
+            mConfigure.setSummary(summary);
+        } else {
+            mConfigure.setSummary(R.string.backup_configure_account_default_summary);
+        }
+    }
+
+    private void updateConfigureSummary() {
+        try {
+            String transport = mBackupManager.getCurrentTransport();
+            String summary = mBackupManager.getDestinationString(transport);
+            setConfigureSummary(summary);
+        } catch (RemoteException e) {
+            // Not much we can do here
+        }
     }
 
     public void onClick(DialogInterface dialog, int which) {
@@ -138,11 +178,7 @@ public class PrivacySettings extends PreferenceActivity implements
             //updateProviders();
             if (mDialogType == DIALOG_ERASE_BACKUP) {
                 setBackupEnabled(false);
-            }
-        } else {
-            if (mDialogType == DIALOG_ERASE_BACKUP) {
-                mBackup.setChecked(true);
-                mAutoRestore.setEnabled(true);
+                updateConfigureSummary();
             }
         }
         mDialogType = 0;
@@ -154,11 +190,9 @@ public class PrivacySettings extends PreferenceActivity implements
      * @param enable whether to enable backup
      */
     private void setBackupEnabled(boolean enable) {
-        IBackupManager bm = IBackupManager.Stub.asInterface(
-                ServiceManager.getService(Context.BACKUP_SERVICE));
-        if (bm != null) {
+        if (mBackupManager != null) {
             try {
-                bm.setBackupEnabled(enable);
+                mBackupManager.setBackupEnabled(enable);
             } catch (RemoteException e) {
                 mBackup.setChecked(!enable);
                 mAutoRestore.setEnabled(!enable);
@@ -167,5 +201,6 @@ public class PrivacySettings extends PreferenceActivity implements
         }
         mBackup.setChecked(enable);
         mAutoRestore.setEnabled(enable);
+        mConfigure.setEnabled(enable);
     }
 }

@@ -16,45 +16,51 @@
 
 package com.android.settings;
 
-import android.bluetooth.BluetoothAdapter;
+import android.app.Activity;
+import android.app.admin.DevicePolicyManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
+import android.net.wifi.p2p.WifiP2pManager;
 import android.nfc.NfcAdapter;
 import android.os.Bundle;
-import android.os.ServiceManager;
 import android.os.SystemProperties;
 import android.preference.CheckBoxPreference;
 import android.preference.Preference;
-import android.preference.PreferenceActivity;
 import android.preference.PreferenceScreen;
 import android.provider.Settings;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.Switch;
+
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyProperties;
-import com.android.settings.bluetooth.BluetoothEnabler;
-import com.android.settings.wifi.WifiEnabler;
 import com.android.settings.nfc.NfcEnabler;
+import com.android.settings.wifi.p2p.WifiP2pEnabler;
 
-public class WirelessSettings extends PreferenceActivity {
+public class WirelessSettings extends SettingsPreferenceFragment {
 
     private static final String KEY_TOGGLE_AIRPLANE = "toggle_airplane";
-    private static final String KEY_TOGGLE_BLUETOOTH = "toggle_bluetooth";
-    private static final String KEY_TOGGLE_WIFI = "toggle_wifi";
     private static final String KEY_TOGGLE_NFC = "toggle_nfc";
-    private static final String KEY_WIFI_SETTINGS = "wifi_settings";
     private static final String KEY_WIMAX_SETTINGS = "wimax_settings";
-    private static final String KEY_BT_SETTINGS = "bt_settings";
+    private static final String KEY_ANDROID_BEAM_SETTINGS = "android_beam_settings";
     private static final String KEY_VPN_SETTINGS = "vpn_settings";
+    private static final String KEY_TOGGLE_WIFI_P2P = "toggle_wifi_p2p";
+    private static final String KEY_WIFI_P2P_SETTINGS = "wifi_p2p_settings";
     private static final String KEY_TETHER_SETTINGS = "tether_settings";
+    private static final String KEY_PROXY_SETTINGS = "proxy_settings";
+    private static final String KEY_MOBILE_NETWORK_SETTINGS = "mobile_network_settings";
 
     public static final String EXIT_ECM_RESULT = "exit_ecm_result";
     public static final int REQUEST_CODE_EXIT_ECM = 1;
 
     private AirplaneModeEnabler mAirplaneModeEnabler;
     private CheckBoxPreference mAirplaneModePreference;
-    private WifiEnabler mWifiEnabler;
     private NfcEnabler mNfcEnabler;
-    private BluetoothEnabler mBtEnabler;
+    private NfcAdapter mNfcAdapter;
+
+    private WifiP2pEnabler mWifiP2pEnabler;
 
     /**
      * Invoked on each preference click in this hierarchy, overrides
@@ -72,7 +78,7 @@ public class WirelessSettings extends PreferenceActivity {
             return true;
         }
         // Let the intents be launched by the Preference manager
-        return false;
+        return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
     public static boolean isRadioAllowed(Context context, String type) {
@@ -86,23 +92,22 @@ public class WirelessSettings extends PreferenceActivity {
     }
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         addPreferencesFromResource(R.xml.wireless_settings);
 
-        CheckBoxPreference airplane = (CheckBoxPreference) findPreference(KEY_TOGGLE_AIRPLANE);
-        CheckBoxPreference wifi = (CheckBoxPreference) findPreference(KEY_TOGGLE_WIFI);
-        CheckBoxPreference bt = (CheckBoxPreference) findPreference(KEY_TOGGLE_BLUETOOTH);
-        CheckBoxPreference nfc = (CheckBoxPreference) findPreference(KEY_TOGGLE_NFC);
-
-        mAirplaneModeEnabler = new AirplaneModeEnabler(this, airplane);
+        final Activity activity = getActivity();
         mAirplaneModePreference = (CheckBoxPreference) findPreference(KEY_TOGGLE_AIRPLANE);
-        mWifiEnabler = new WifiEnabler(this, wifi);
-        mBtEnabler = new BluetoothEnabler(this, bt);
-        mNfcEnabler = new NfcEnabler(this, nfc);
+        CheckBoxPreference nfc = (CheckBoxPreference) findPreference(KEY_TOGGLE_NFC);
+        PreferenceScreen androidBeam = (PreferenceScreen) findPreference(KEY_ANDROID_BEAM_SETTINGS);
 
-        String toggleable = Settings.System.getString(getContentResolver(),
+        CheckBoxPreference wifiP2p = (CheckBoxPreference) findPreference(KEY_TOGGLE_WIFI_P2P);
+
+        mAirplaneModeEnabler = new AirplaneModeEnabler(activity, mAirplaneModePreference);
+        mNfcEnabler = new NfcEnabler(activity, nfc, androidBeam);
+
+        String toggleable = Settings.System.getString(activity.getContentResolver(),
                 Settings.System.AIRPLANE_MODE_TOGGLEABLE_RADIOS);
 
         //enable/disable wimax depending on the value in config.xml
@@ -111,8 +116,7 @@ public class WirelessSettings extends PreferenceActivity {
         if (!isWimaxEnabled) {
             PreferenceScreen root = getPreferenceScreen();
             Preference ps = (Preference) findPreference(KEY_WIMAX_SETTINGS);
-            if (ps != null)
-                root.removePreference(ps);
+            if (ps != null) root.removePreference(ps);
         } else {
             if (toggleable == null || !toggleable.contains(Settings.System.RADIO_WIMAX )
                     && isWimaxEnabled) {
@@ -120,76 +124,93 @@ public class WirelessSettings extends PreferenceActivity {
                 ps.setDependency(KEY_TOGGLE_AIRPLANE);
             }
         }
-
         // Manually set dependencies for Wifi when not toggleable.
         if (toggleable == null || !toggleable.contains(Settings.System.RADIO_WIFI)) {
-            wifi.setDependency(KEY_TOGGLE_AIRPLANE);
-            findPreference(KEY_WIFI_SETTINGS).setDependency(KEY_TOGGLE_AIRPLANE);
             findPreference(KEY_VPN_SETTINGS).setDependency(KEY_TOGGLE_AIRPLANE);
         }
 
         // Manually set dependencies for Bluetooth when not toggleable.
         if (toggleable == null || !toggleable.contains(Settings.System.RADIO_BLUETOOTH)) {
-            bt.setDependency(KEY_TOGGLE_AIRPLANE);
-            findPreference(KEY_BT_SETTINGS).setDependency(KEY_TOGGLE_AIRPLANE);
+            // No bluetooth-dependent items in the list. Code kept in case one is added later.
         }
 
-        // Remove Bluetooth Settings if Bluetooth service is not available.
-        if (ServiceManager.getService(BluetoothAdapter.BLUETOOTH_SERVICE) == null) {
-            getPreferenceScreen().removePreference(bt);
+        // Manually set dependencies for NFC when not toggleable.
+        if (toggleable == null || !toggleable.contains(Settings.System.RADIO_NFC)) {
+            findPreference(KEY_TOGGLE_NFC).setDependency(KEY_TOGGLE_AIRPLANE);
+            findPreference(KEY_ANDROID_BEAM_SETTINGS).setDependency(KEY_TOGGLE_AIRPLANE);
         }
 
         // Remove NFC if its not available
-        if (NfcAdapter.getDefaultAdapter(this) == null) {
+        mNfcAdapter = NfcAdapter.getDefaultAdapter(activity);
+        if (mNfcAdapter == null) {
             getPreferenceScreen().removePreference(nfc);
+            getPreferenceScreen().removePreference(androidBeam);
+            mNfcEnabler = null;
         }
 
-        // Disable Tethering if it's not allowed
+        // Remove Mobile Network Settings if it's a wifi-only device.
+        if (Utils.isWifiOnly(getActivity())) {
+            getPreferenceScreen().removePreference(findPreference(KEY_MOBILE_NETWORK_SETTINGS));
+        }
+
+        WifiP2pManager p2p = (WifiP2pManager) activity.getSystemService(Context.WIFI_P2P_SERVICE);
+
+        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT)) {
+            getPreferenceScreen().removePreference(wifiP2p);
+        } else {
+            mWifiP2pEnabler = new WifiP2pEnabler(activity, wifiP2p);
+        }
+        getPreferenceScreen().removePreference(findPreference(KEY_WIFI_P2P_SETTINGS));
+
+        // Enable Proxy selector settings if allowed.
+        Preference mGlobalProxy = findPreference(KEY_PROXY_SETTINGS);
+        DevicePolicyManager mDPM = (DevicePolicyManager)
+                activity.getSystemService(Context.DEVICE_POLICY_SERVICE);
+        // proxy UI disabled until we have better app support
+        getPreferenceScreen().removePreference(mGlobalProxy);
+        mGlobalProxy.setEnabled(mDPM.getGlobalProxyAdmin() == null);
+
+        // Disable Tethering if it's not allowed or if it's a wifi-only device
         ConnectivityManager cm =
-                (ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
+                (ConnectivityManager) activity.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (!cm.isTetheringSupported()) {
             getPreferenceScreen().removePreference(findPreference(KEY_TETHER_SETTINGS));
         } else {
-            String[] usbRegexs = cm.getTetherableUsbRegexs();
-            String[] wifiRegexs = cm.getTetherableWifiRegexs();
             Preference p = findPreference(KEY_TETHER_SETTINGS);
-            if (wifiRegexs.length == 0) {
-                p.setTitle(R.string.tether_settings_title_usb);
-                p.setSummary(R.string.tether_settings_summary_usb);
-            } else {
-                if (usbRegexs.length == 0) {
-                    p.setTitle(R.string.tether_settings_title_wifi);
-                    p.setSummary(R.string.tether_settings_summary_wifi);
-                } else {
-                    p.setTitle(R.string.tether_settings_title_both);
-                    p.setSummary(R.string.tether_settings_summary_both);
-                }
-            }
+            p.setTitle(Utils.getTetheringLabel(cm));
         }
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
 
         mAirplaneModeEnabler.resume();
-        mWifiEnabler.resume();
-        mBtEnabler.resume();
-        mNfcEnabler.resume();
+        if (mNfcEnabler != null) {
+            mNfcEnabler.resume();
+        }
+
+        if (mWifiP2pEnabler != null) {
+            mWifiP2pEnabler.resume();
+        }
     }
 
     @Override
-    protected void onPause() {
+    public void onPause() {
         super.onPause();
 
         mAirplaneModeEnabler.pause();
-        mWifiEnabler.pause();
-        mBtEnabler.pause();
-        mNfcEnabler.pause();
+        if (mNfcEnabler != null) {
+            mNfcEnabler.pause();
+        }
+
+        if (mWifiP2pEnabler != null) {
+            mWifiP2pEnabler.pause();
+        }
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQUEST_CODE_EXIT_ECM) {
             Boolean isChoiceYes = data.getBooleanExtra(EXIT_ECM_RESULT, false);
             // Set Airplane mode based on the return value and checkbox state

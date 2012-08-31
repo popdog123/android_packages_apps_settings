@@ -17,39 +17,56 @@
 package com.android.settings;
 
 import android.content.Context;
-import android.preference.PreferenceCategory;
+import android.preference.Preference;
 import android.util.AttributeSet;
 import android.view.View;
+import android.widget.TextView;
 
-import java.util.Map;
-
-public class ProgressCategory extends PreferenceCategory {
+public class ProgressCategory extends ProgressCategoryBase {
 
     private boolean mProgress = false;
-    
+    private Preference mNoDeviceFoundPreference;
+    private boolean mNoDeviceFoundAdded;
+
     public ProgressCategory(Context context, AttributeSet attrs) {
         super(context, attrs);
         setLayoutResource(R.layout.preference_progress_category);
     }
-    
+
     @Override
     public void onBindView(View view) {
         super.onBindView(view);
-        View textView = view.findViewById(R.id.scanning_text);
-        View progressBar = view.findViewById(R.id.scanning_progress);
+        final TextView scanning = (TextView) view.findViewById(R.id.scanning_text);
+        final View progressBar = view.findViewById(R.id.scanning_progress);
 
-        int visibility = mProgress ? View.VISIBLE : View.INVISIBLE;
-        textView.setVisibility(visibility);
-        progressBar.setVisibility(visibility);
+        scanning.setText(mProgress ? R.string.progress_scanning : R.string.progress_tap_to_pair);
+        boolean noDeviceFound = (getPreferenceCount() == 0 ||
+                (getPreferenceCount() == 1 && getPreference(0) == mNoDeviceFoundPreference));
+        scanning.setVisibility(noDeviceFound ? View.GONE : View.VISIBLE);
+        progressBar.setVisibility(mProgress ? View.VISIBLE : View.GONE);
+
+        if (mProgress || !noDeviceFound) {
+            if (mNoDeviceFoundAdded) {
+                removePreference(mNoDeviceFoundPreference);
+                mNoDeviceFoundAdded = false;
+            }
+        } else {
+            if (!mNoDeviceFoundAdded) {
+                if (mNoDeviceFoundPreference == null) {
+                    mNoDeviceFoundPreference = new Preference(getContext());
+                    mNoDeviceFoundPreference.setLayoutResource(R.layout.preference_empty_list);
+                    mNoDeviceFoundPreference.setTitle(R.string.bluetooth_no_devices_found);
+                    mNoDeviceFoundPreference.setSelectable(false);
+                }
+                addPreference(mNoDeviceFoundPreference);
+                mNoDeviceFoundAdded = true;
+            }
+        }
     }
-    
-    /**
-     * Turn on/off the progress indicator and text on the right.
-     * @param progressOn whether or not the progress should be displayed 
-     */
+
+    @Override
     public void setProgress(boolean progressOn) {
         mProgress = progressOn;
         notifyChanged();
     }
 }
-
