@@ -131,8 +131,8 @@
     	android:icon="@drawable/satellite_dish">
     	<intent
     		android:action="android.intent.action.MAIN"
-    		android:targetPackage="com.updater.ota"
-    		android:targetClass="com.updater.ota.OTAUpdaterActivity" />
+    		android:targetPackage="com.otaupdater"
+    		android:targetClass="com.otaupdater.OTAUpdaterActivity" />
     </header>
 
     <!-- System -->
